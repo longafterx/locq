@@ -44,13 +44,14 @@ func TestLineReaderDoesNotCountPartialLineOnReadFailure(t *testing.T) {
 			partial := strings.Repeat("x", size)
 			source := io.MultiReader(strings.NewReader("code\n"+partial), failingSourceReader{err: failure})
 			var diagnostics bytes.Buffer
-			got := AnalyzeReader(
+			got, readErr := AnalyzeReader(
 				"sample.go",
 				NewDefinedLanguages().Langs["Go"],
 				source,
-				&ClocOptions{Diagnostics: &diagnostics},
+				&FileOptions{Diagnostics: &diagnostics},
 			)
-			if got.Code != 1 || !strings.Contains(diagnostics.String(), failure.Error()) {
+
+			if got.Code != 1 || !errors.Is(readErr, failure) {
 				t.Fatalf("partial failing line counted or failure lost: %+v, %q", got, diagnostics.String())
 			}
 		})

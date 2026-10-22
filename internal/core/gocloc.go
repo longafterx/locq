@@ -1,12 +1,5 @@
 package core
 
-// Processor is gocloc analyzing processor.
-type Processor struct {
-	langs *DefinedLanguages
-	opts  *ClocOptions
-	exts  map[string]string
-}
-
 // Result defined processing result.
 type Result struct {
 	Total         *Language
@@ -15,70 +8,26 @@ type Result struct {
 	MaxPathLength int
 }
 
-// Analyze counts source lines in files and directories using built-in languages.
-// Nil options and &Options{} both select automatic concurrency without deduplication.
-// Empty paths return an empty result; they do not implicitly scan the current directory.
-// Invalid options return an error before scanning. Unreadable files are skipped
-// with a diagnostic, following Processor.Analyze's behavior.
-// Analyze returns only after all workers and callbacks have completed.
+// Analyze counts source lines. Empty paths return an empty result. Invalid
+// options fail before I/O. Unreadable inputs are skipped with diagnostics; writer
+// failures are returned after all workers finish. Traversal order determines
+// which identical file Dedup retains, regardless of worker completion order.
 func Analyze(paths []string, opts *Options) (*Result, error) {
-	return AnalyzeWithExts(paths, opts, Exts)
-}
-
-// AnalyzeWithExts lets the public package retain its mutable Exts mapping.
-func AnalyzeWithExts(paths []string, opts *Options, exts map[string]string) (*Result, error) {
-	languages := NewDefinedLanguages()
-	prepared, err := opts.prepareWithExts(languages, exts)
+	config, err := opts.prepare()
 	if err != nil {
 		return nil, err
 	}
-	return NewProcessorWithExts(languages, prepared, exts).Analyze(paths)
-}
-
-func resolveWorkerCount(opts *ClocOptions) int {
-	if opts == nil || opts.Workers <= 1 {
-		return 1
+	state := newRunState(config, nil, nil)
+	if opts != nil && opts.Diagnostics != nil {
+		state.diagnostics.writer = opts.Diagnostics
 	}
-	if opts.Workers > MaxWorkers {
-		return MaxWorkers
-	}
-	return opts.Workers
-}
 
-// NewProcessor creates a processor with caller-supplied language definitions.
-// It retains ClocOptions semantics, including one worker for Workers <= 1.
-// For built-in languages and automatic concurrency, use Analyze with Options.
-func NewProcessor(langs *DefinedLanguages, options *ClocOptions) *Processor {
-	return NewProcessorWithExts(langs, options, Exts)
-}
-
-// NewProcessorWithExts supplies an extension mapping without changing global state.
-func NewProcessorWithExts(langs *DefinedLanguages, options *ClocOptions, exts map[string]string) *Processor {
-	return &Processor{
-		langs: langs,
-		opts:  options,
-		exts:  exts,
-	}
-}
-
-// Analyze executes gocloc parsing for the directory of the paths argument and returns the result.
-func (p *Processor) Analyze(paths []string) (*Result, error) {
-	opts := p.opts.withDiagnostics()
-	if opts.filter == nil {
-		filter, err := preparePathFilter(opts)
-		if err != nil {
-			return nil, err
-		}
-		opts.filter = filter
-	}
-	opts.exts = p.exts
-	opts.extsSet = true
-	total := NewLanguage("TOTAL", []string{}, [][]string{{"", ""}})
-	languages, clocFiles, err := scanAndAnalyzeFiles(paths, p.langs, opts)
+	total := &Language{Name: "TOTAL", Files: []string{}}
+	languages, clocFiles, err := scanAndAnalyzeFiles(paths, config.languages, state)
 	if err != nil {
 		return nil, err
 	}
-	if err := opts.diagnosticError(); err != nil {
+	if err := state.diagnosticError(); err != nil {
 		return nil, err
 	}
 	maxPathLen := 0

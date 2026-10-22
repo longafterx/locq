@@ -12,7 +12,8 @@ import (
 // Frozen string-based parser from 136a87b. Keep this test oracle independent of
 // the byte parser so differential tests catch changes to counting and callbacks.
 // Only diagnostic formatting is shared; exact records are tested separately.
-func referenceAnalyzeReader(filename string, language *Language, file io.Reader, opts *ClocOptions) (*ClocFile, error) {
+func referenceAnalyzeReader(filename string, language *LanguageDefinition, file io.Reader, options *FileOptions) (*ClocFile, error) {
+	opts := newRunState(&runConfig{Debug: options.Debug}, options.Diagnostics, options.OnLine)
 	if opts.Debug {
 		opts.diagnosticf("[FILE] file=%q\n", filename)
 	}
@@ -149,10 +150,10 @@ scannerloop:
 	return clocFile, nil
 }
 
-func referenceOnBlank(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg string) {
+func referenceOnBlank(clocFile *ClocFile, opts *runState, isInComments bool, line, lineOrg string) {
 	clocFile.Blanks++
-	if opts.OnBlank != nil {
-		opts.OnBlank(line)
+	if opts.onLine != nil {
+		opts.onLine(LineEvent{Kind: BlankLine, Text: line, Number: int64(clocFile.Code) + int64(clocFile.Comments) + int64(clocFile.Blanks)})
 	}
 
 	if opts.Debug {
@@ -165,10 +166,10 @@ func referenceOnBlank(clocFile *ClocFile, opts *ClocOptions, isInComments bool, 
 	}
 }
 
-func referenceOnComment(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg string) {
+func referenceOnComment(clocFile *ClocFile, opts *runState, isInComments bool, line, lineOrg string) {
 	clocFile.Comments++
-	if opts.OnComment != nil {
-		opts.OnComment(line)
+	if opts.onLine != nil {
+		opts.onLine(LineEvent{Kind: CommentLine, Text: line, Number: int64(clocFile.Code) + int64(clocFile.Comments) + int64(clocFile.Blanks)})
 	}
 
 	if opts.Debug {
@@ -181,10 +182,10 @@ func referenceOnComment(clocFile *ClocFile, opts *ClocOptions, isInComments bool
 	}
 }
 
-func referenceOnCode(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg string) {
+func referenceOnCode(clocFile *ClocFile, opts *runState, isInComments bool, line, lineOrg string) {
 	clocFile.Code++
-	if opts.OnCode != nil {
-		opts.OnCode(line)
+	if opts.onLine != nil {
+		opts.onLine(LineEvent{Kind: CodeLine, Text: line, Number: int64(clocFile.Code) + int64(clocFile.Comments) + int64(clocFile.Blanks)})
 	}
 
 	if opts.Debug {
@@ -195,4 +196,34 @@ func referenceOnCode(clocFile *ClocFile, opts *ClocOptions, isInComments bool, l
 			[]byte(lineOrg),
 		)
 	}
+}
+
+// Historical string helpers belong only to this frozen oracle.
+func trimBOM(line string) string {
+	l := len(line)
+	if l >= 3 {
+		if line[0] == 0xef && line[1] == 0xbb && line[2] == 0xbf {
+			trimLine := line[3:]
+			return trimLine
+		}
+	}
+	return line
+}
+
+func containsComment(line string, multiLines [][]string) bool {
+	for _, comments := range multiLines {
+		for _, comm := range comments {
+			if strings.Contains(line, comm) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nextRune(s string) rune {
+	for _, r := range s {
+		return r
+	}
+	return 0
 }

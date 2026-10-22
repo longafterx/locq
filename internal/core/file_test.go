@@ -42,7 +42,7 @@ func TestAnalyzeReaderDebugRecords(t *testing.T) {
 			t.Parallel()
 			filename := "dir/\"file\n.go"
 			var diagnostics bytes.Buffer
-			opts := &ClocOptions{Debug: true, Diagnostics: &diagnostics}
+			opts := &FileOptions{Debug: true, Diagnostics: &diagnostics}
 			AnalyzeReader(
 				filename,
 				NewDefinedLanguages().Langs["Go"],
@@ -62,24 +62,17 @@ func TestAnalyzeReaderDebugRecords(t *testing.T) {
 
 func TestAnalyzeReaderReportsReadFailure(t *testing.T) {
 	failure := errors.New("injected read failure")
-	var diagnostics bytes.Buffer
 	reader := io.MultiReader(strings.NewReader("package main\n"), failingSourceReader{err: failure})
-	opts := &ClocOptions{Diagnostics: &diagnostics}
-	result := AnalyzeReader("sample.go", NewDefinedLanguages().Langs["Go"], reader, opts)
-	if result.Code != 1 || !strings.Contains(diagnostics.String(), "injected read failure") {
-		t.Fatalf("result=%+v diagnostics=%q", result, diagnostics.String())
-	}
-	if !strings.Contains(diagnostics.String(), "sample.go") || !strings.HasPrefix(diagnostics.String(), "warning:") {
-		t.Fatalf("diagnostic lacks source context: %s", diagnostics.String())
+	result, err := AnalyzeReader("sample.go", NewDefinedLanguages().Langs["Go"], reader, nil)
+	if result.Code != 1 || !errors.Is(err, failure) || !strings.Contains(err.Error(), "sample.go") {
+		t.Fatalf("result=%+v error=%v", result, err)
 	}
 }
 
 func TestAnalyzeFileReportsOpenFailure(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.go")
-	var diagnostics bytes.Buffer
-	result := AnalyzeFile(path, NewDefinedLanguages().Langs["Go"], &ClocOptions{Diagnostics: &diagnostics})
-	if result.Name != path || result.Code != 0 || !strings.Contains(diagnostics.String(), path) {
-		t.Fatalf("result=%+v diagnostics=%q", result, diagnostics.String())
+	result, err := AnalyzeFile(filepath.Join(t.TempDir(), "missing.go"), NewDefinedLanguages().Langs["Go"], nil)
+	if result != nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("result=%+v error=%v", result, err)
 	}
 }
 
@@ -92,7 +85,7 @@ func TestDetectAndAnalyzeFileDistinguishesFailureFromExclusion(t *testing.T) {
 	languages := NewDefinedLanguages()
 	reader := newLineReader(nil)
 	for _, skip := range []bool{false, true} {
-		opts := &ClocOptions{SkipDuplicated: skip}
+		opts := testRunState(t, &Options{Dedup: !skip})
 		missing := detectAndAnalyzeFile(fileCandidate{path: filepath.Join(dir, "missing.go")}, languages, opts, reader)
 		if !errors.Is(missing.err, os.ErrNotExist) {
 			t.Fatalf("missing file error=%v", missing.err)
@@ -125,8 +118,8 @@ func TestDetectAndAnalyzeFile(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			opts := NewClocOptions()
-			opts.SkipDuplicated = false
+			opts := testRunState(t, nil)
+			opts.runConfig.Dedup = true
 			langs := NewDefinedLanguages()
 			reader := newLineReader(nil)
 			ext, recognized := detectFileType(path, opts, func(all bool) ([]byte, error) {
@@ -139,7 +132,7 @@ func TestDetectAndAnalyzeFile(t *testing.T) {
 				}
 				return content, io.EOF
 			})
-			key, known := Exts[ext]
+			key, known := builtInExtensions[ext]
 			got := detectAndAnalyzeFile(fileCandidate{path: path}, langs, opts, reader)
 			if !recognized || !known {
 				if !got.ignored {
@@ -147,26 +140,29 @@ func TestDetectAndAnalyzeFile(t *testing.T) {
 				}
 				return
 			}
-			want := AnalyzeFile(path, langs.Langs[key], opts)
+			want, readErr := AnalyzeFile(path, langs.Langs[key], nil)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 			if got.ignored || got.languageKey != key || !reflect.DeepEqual(got.clocFile, want) {
 				t.Fatalf("combined result = %+v (%+v), want %s %+v", got, got.clocFile, key, want)
 			}
 			if got.digest != md5.Sum([]byte(tc.content)) {
 				t.Fatal("digest must include the detection prefix exactly once")
 			}
-			opts.SkipDuplicated = true
+			opts.runConfig.Dedup = false
 			withoutHash := detectAndAnalyzeFile(fileCandidate{path: path}, langs, opts, reader)
 			if withoutHash.ignored || !reflect.DeepEqual(withoutHash.clocFile, want) {
-				t.Fatalf("skip-duplicated result = %+v, want %+v", withoutHash.clocFile, want)
+				t.Fatalf("non-dedup result = %+v, want %+v", withoutHash.clocFile, want)
 			}
 			if withoutHash.digest != [md5.Size]byte{} {
-				t.Fatal("skip-duplicated must not compute a digest")
+				t.Fatal("non-dedup analysis must not compute a digest")
 			}
-			opts.ExcludeExts[key] = struct{}{}
+			opts.ExcludeLangs[key] = struct{}{}
 			if !detectAndAnalyzeFile(fileCandidate{path: path}, langs, opts, reader).ignored {
 				t.Fatal("excluded language was accepted")
 			}
-			delete(opts.ExcludeExts, key)
+			delete(opts.ExcludeLangs, key)
 			opts.IncludeLangs["not-a-language"] = struct{}{}
 			if !detectAndAnalyzeFile(fileCandidate{path: path}, langs, opts, reader).ignored {
 				t.Fatal("language outside include filter was accepted")
@@ -220,7 +216,7 @@ func TestDetectAndAnalyzeFileAmbiguousLanguages(t *testing.T) {
 			got := detectAndAnalyzeFile(
 				fileCandidate{path: path},
 				NewDefinedLanguages(),
-				&ClocOptions{SkipDuplicated: true},
+				testRunState(t, nil),
 				newLineReader(nil),
 			)
 			if got.err != nil || got.ignored || got.languageKey != tt.language {
@@ -246,9 +242,12 @@ class A:
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -279,9 +278,12 @@ class A:
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -315,9 +317,12 @@ func TestAnalyzeFile4PythonNoShebang(t *testing.T) {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 2 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -349,9 +354,12 @@ func main() {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Go", []string{"//"}, [][]string{{"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewDefinedLanguages().Langs["Go"]
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -383,9 +391,12 @@ func main() {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Go", []string{"//"}, [][]string{{"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewDefinedLanguages().Langs["Go"]
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -416,9 +427,12 @@ func main() {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Go", []string{"//"}, [][]string{{"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewDefinedLanguages().Langs["Go"]
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -448,9 +462,12 @@ func TestAnalyzeFile4GoWithNoComment(t *testing.T) {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Go", []string{"//"}, [][]string{{"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewDefinedLanguages().Langs["Go"]
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -484,9 +501,12 @@ vo /* ff */
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("ATS", []string{"//"}, [][]string{{"(*", "*)"}, {"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("ATS", []string{"//"}, [][]string{{"(*", "*)"}, {"/*", "*/"}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 3 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -525,9 +545,12 @@ func TestAnalyzeFile4JavaWithCommentInCodeLine(t *testing.T) {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Java", []string{"//"}, [][]string{{"/*", "*/"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Java", []string{"//"}, [][]string{{"/*", "*/"}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 0 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -568,9 +591,12 @@ func TestAnalyzeFile4Makefile(t *testing.T) {
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Makefile", []string{"#"}, [][]string{{"", ""}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Makefile", []string{"#"}, [][]string{{"", ""}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 4 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -597,9 +623,12 @@ class A:
 	pass
 `))
 
-	language := NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeReader("test.py", language, buf, clocOpts)
+	language := NewLanguageDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeReader("test.py", language, buf, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -615,40 +644,13 @@ class A:
 	}
 }
 
-func TestAnalyzeReader_OnCallbacks(t *testing.T) {
-	buf := bytes.NewBuffer([]byte(`foo
-		"""bar
-
-`))
-
-	var lines int
-	language := NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
-	clocOpts := NewClocOptions()
-	clocOpts.OnCode = func(line string) {
-		if line != "foo" {
-			t.Errorf("invalid logic. code_line=%v", line)
-		}
-		lines++
-	}
-
-	clocOpts.OnBlank = func(line string) {
-		if line != "" {
-			t.Errorf("invalid logic. blank_line=%v", line)
-		}
-		lines++
-	}
-
-	clocOpts.OnComment = func(line string) {
-		if line != "\"\"\"bar" {
-			t.Errorf("invalid logic. comment_line=%v", line)
-		}
-		lines++
-	}
-
-	AnalyzeReader("test.py", language, buf, clocOpts)
-
-	if lines != 3 {
-		t.Errorf("invalid logic. lines=%v", lines)
+func TestAnalyzeReaderEvents(t *testing.T) {
+	language := NewLanguageDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}})
+	var events []LineEvent
+	_, err := AnalyzeReader("test.py", language, strings.NewReader("foo\n  \"\"\"bar\n\n"), &FileOptions{OnLine: func(e LineEvent) { events = append(events, e) }})
+	want := []LineEvent{{Number: 1, Kind: CodeLine, Text: "foo"}, {Number: 2, Kind: CommentLine, Text: "\"\"\"bar"}, {Number: 3, Kind: BlankLine, Text: ""}}
+	if err != nil || !reflect.DeepEqual(events, want) {
+		t.Fatalf("events=%+v error=%v", events, err)
 	}
 }
 
@@ -668,9 +670,12 @@ const color = "blue"
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Imba", []string{"#"}, [][]string{{"###", "###"}})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Imba", []string{"#"}, [][]string{{"###", "###"}})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 1 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)
@@ -705,10 +710,13 @@ js:
 		t.Fatalf("os.WriteFile() error. err=[%v]", err)
 	}
 
-	language := NewLanguage("Just", []string{"#"}, [][]string{{"", ""}}).
-		WithRegexLineComments([]string{`^#[^!].*`})
-	clocOpts := NewClocOptions()
-	clocFile := AnalyzeFile(tmpfile, language, clocOpts)
+	language := NewLanguageDefinition("Just", []string{"#"}, [][]string{{"", ""}}).
+		withRegexLineComments([]string{`^#[^!].*`})
+	clocOpts := &FileOptions{}
+	clocFile, readErr := AnalyzeFile(tmpfile, language, clocOpts)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 
 	if clocFile.Blanks != 3 {
 		t.Errorf("invalid logic. blanks=%v", clocFile.Blanks)

@@ -12,18 +12,18 @@ import (
 )
 
 func TestOptionsPrepareAutomaticWorkers(t *testing.T) {
-	languages := NewDefinedLanguages()
+
 	previous := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
 	for _, limit := range []int{1, 3, MaxWorkers + 1} {
 		t.Run("GOMAXPROCS="+strconv.Itoa(limit), func(t *testing.T) {
 			runtime.GOMAXPROCS(limit)
 			for _, opts := range []*Options{nil, {}} {
-				prepared, err := opts.prepare(languages)
+				prepared, err := opts.prepare()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if prepared.Workers != min(limit, MaxWorkers) || !prepared.SkipDuplicated {
+				if prepared.Workers != min(limit, MaxWorkers) || prepared.Dedup {
 					t.Fatalf("prepared=%+v, want automatic workers without deduplication", prepared)
 				}
 				if opts != nil && opts.Workers != 0 {
@@ -39,7 +39,7 @@ func TestOptionsPrepareFixedWorkers(t *testing.T) {
 	for _, workers := range []int{1, 8, MaxWorkers} {
 		t.Run(strconv.Itoa(workers), func(t *testing.T) {
 			opts := &Options{Workers: workers}
-			prepared, err := opts.prepare(NewDefinedLanguages())
+			prepared, err := opts.prepare()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,13 +59,11 @@ func TestOptionsPrepareInvalidFields(t *testing.T) {
 	}{
 		{name: "negative workers", opts: Options{Workers: -1}, field: "Workers"},
 		{name: "too many workers", opts: Options{Workers: MaxWorkers + 1}, field: "Workers"},
-		{name: "match", opts: Options{Match: "["}, field: "Match"},
-		{name: "not match", opts: Options{NotMatch: "["}, field: "NotMatch"},
-		{name: "match directory", opts: Options{MatchDir: "["}, field: "MatchDir"},
-		{name: "not match directory", opts: Options{NotMatchDir: "["}, field: "NotMatchDir"},
+		{name: "include", opts: Options{Include: []string{"["}}, field: "Include"},
+		{name: "exclude", opts: Options{Exclude: []string{"["}}, field: "Exclude"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prepared, err := tc.opts.prepare(NewDefinedLanguages())
+			prepared, err := tc.opts.prepare()
 			var optionErr *OptionError
 			if !errors.As(err, &optionErr) {
 				t.Fatalf("error=%v, want OptionError", err)
@@ -88,56 +86,52 @@ func TestOptionsPrepareInvalidFields(t *testing.T) {
 }
 
 func TestOptionsPrepareFiltersAndOwnership(t *testing.T) {
-	t.Parallel()
-	opts := &Options{
-		Workers: 4, Dedup: true, Debug: true, Diagnostics: io.Discard,
-		ExcludeExts:  []string{"py", "py", "txt", "unknown"},
-		IncludeLangs: []string{"Python", "Go", "Go", "unknown"},
-		Exclude:      []string{"{dist,target}/", "*.min.js"},
-		Match:        "*.go",
-		NotMatch:     "*_test.go",
-		MatchDir:     "src",
-		NotMatchDir:  "vendor",
-	}
+	opts := &Options{Workers: 4, Dedup: true, Debug: true, Diagnostics: io.Discard,
+		Include: []string{"src/", "*.go"}, Exclude: []string{"target/", "*.min.js"},
+		IncludeLangs: []string{"Go", "Python", "Go"}, ExcludeLangs: []string{"Python"}}
 	before := *opts
-	before.ExcludeExts = append([]string{}, opts.ExcludeExts...)
-	before.IncludeLangs = append([]string{}, opts.IncludeLangs...)
-	before.Exclude = append([]string{}, opts.Exclude...)
-	prepared, err := opts.prepare(NewDefinedLanguages())
+	config, err := opts.prepare()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(*opts, before) {
-		t.Fatal("preparation mutated caller options")
+		t.Fatal("preparation mutated options")
 	}
-	flagsForwarded := !prepared.SkipDuplicated && prepared.Debug
-	if !flagsForwarded || prepared.Diagnostics != io.Discard {
-		t.Fatalf("options not forwarded: %+v", prepared)
+	if !config.Dedup || !config.Debug || config.Workers != 4 {
+		t.Fatalf("config=%+v", config)
 	}
-	wantExcluded := map[string]struct{}{"Python": {}, "Plain Text": {}, "unknown": {}}
-	wantIncluded := map[string]struct{}{"Go": {}, "Python": {}}
-	if !reflect.DeepEqual(prepared.ExcludeExts, wantExcluded) {
-		t.Fatalf("excluded=%v, want %v", prepared.ExcludeExts, wantExcluded)
-	}
-	if !reflect.DeepEqual(prepared.IncludeLangs, wantIncluded) {
-		t.Fatalf("included=%v, want %v", prepared.IncludeLangs, wantIncluded)
-	}
-	gotPatterns := []string{
-		prepared.Match, prepared.NotMatch,
-		prepared.MatchDir, prepared.NotMatchDir,
-	}
-	wantPatterns := []string{opts.Match, opts.NotMatch, opts.MatchDir, opts.NotMatchDir}
-	if !reflect.DeepEqual(gotPatterns, wantPatterns) {
-		t.Fatalf("patterns=%q, want %q", gotPatterns, wantPatterns)
-	}
-	// Each call owns its sets and compiled filters, not caller slices or shared state.
-	opts.ExcludeExts[0] = "go"
+	opts.Include[0] = "changed/"
+	opts.Exclude[0] = "changed/"
 	opts.IncludeLangs[0] = "JSON"
-	opts.Exclude[0] = "different/"
-	if !reflect.DeepEqual(prepared.Exclude, before.Exclude) {
-		t.Fatal("prepared glob filters alias caller slices")
+	opts.ExcludeLangs[0] = "JSON"
+	if config.filter.include.rules[0].pattern != "src" || config.filter.exclude.rules[0].pattern != "target" {
+		t.Fatal("glob rules alias caller input")
 	}
-	if !reflect.DeepEqual(prepared.ExcludeExts, wantExcluded) || !reflect.DeepEqual(prepared.IncludeLangs, wantIncluded) {
-		t.Fatal("prepared filters alias caller slices")
+	if _, ok := config.IncludeLangs["Go"]; !ok {
+		t.Fatal("included languages alias input")
+	}
+	if _, ok := config.ExcludeLangs["Python"]; !ok {
+		t.Fatal("excluded languages alias input")
+	}
+}
+
+func TestConfigurationSnapshotsCustomDefinitions(t *testing.T) {
+	custom := NewLanguageDefinition("Custom", []string{"#"}, [][]string{{"{-", "-}"}})
+	opts := &Options{
+		Definitions: map[string]*LanguageDefinition{"Custom": custom},
+		Extensions:  map[string]string{"custom": "Custom"},
+	}
+	config, err := opts.prepare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom.Name = "changed"
+	custom.lineComments[0] = "!"
+	custom.multiLines[0][0] = "!"
+	opts.Extensions["custom"] = "Go"
+	delete(opts.Definitions, "Custom")
+	snapshot := config.languages.Langs["Custom"]
+	if config.exts["custom"] != "Custom" || snapshot.Name != "Custom" || snapshot.lineComments[0] != "#" || snapshot.multiLines[0][0] != "{-" {
+		t.Fatalf("snapshot aliases input: %+v", snapshot)
 	}
 }

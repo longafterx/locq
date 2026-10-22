@@ -240,6 +240,8 @@ the --timeout switch for more information.
 cloc .  22.923s user 1.960s system 86.7% cpu 28.577 total
 ```
 
+The [refactor fixture comparison](docs/REFACTOR_BENCHMARKS.md) records separate synthetic workloads and their measurement limits.
+
 ## Usage
 
 ```sh
@@ -250,9 +252,9 @@ gocloc src tests
 # Exclude dependency and build directories
 gocloc --exclude '{dist,node_modules,target}/' .
 
-# Filter languages or exclude extensions
+# Filter languages or literal filename suffixes
 gocloc -l Go,Python .
-gocloc -e txt,md .
+gocloc --exclude '*.{txt,md}' .
 
 # Report each file, sorted by code lines
 gocloc -f -s code .
@@ -268,7 +270,7 @@ gocloc -L
 gocloc -h
 ```
 
-Workers are selected automatically; use `-w 1` through `-w 64` to override.
+Workers are selected automatically (`-w 0`); use `-w 1` through `-w 64` to override.
 `-o` supports `default`, `json`, `markdown`, `cloc-xml`, and `sloccount`.
 Short and long options can be mixed; see `gocloc -h` for the full list.
 
@@ -278,9 +280,9 @@ any matching rule excludes the entry:
 ```sh
 gocloc --exclude 'target/' --exclude '*.min.js' .
 gocloc --exclude 'src/generated/' --exclude '**/vendor/' .
-gocloc --match '*.go' --not-match '*_test.go' .
-gocloc --match-d 'src/' --not-match-d '{dist,node_modules,target}/' .
-gocloc --match 'src/**/*.{go,py}' .
+gocloc --include '*.go' --exclude '*_test.go' .
+gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
+gocloc --include 'src/**/*.{go,py}' .
 ```
 
 | Exclusion pattern | Meaning |
@@ -302,18 +304,17 @@ backslashes escape glob characters. Invalid patterns fail before scanning.
 Exclusions take precedence over inclusions. `!` does not re-include entries,
 and filters do not automatically read `.gitignore` files.
 
-`--match` and `--not-match` filter files only; a trailing `/` is rejected.
-`--match-d` and `--not-match-d` filter directories and all their descendants; a trailing `/` is optional.
-Directory inclusion keeps traversing unmatched parents to find nested matches.
-When both file and directory inclusion filters are set, files must satisfy both.
-These four flags each accept one glob; use `{a,b}` for alternatives. Empty values disable the filter.
-`--exclude` is repeatable and rejects empty values.
+`--include` and `--exclude` are repeatable and reject empty values. Include patterns
+are ORed: a file is included when it or any parent directory matches. Matching a
+directory includes every descendant; unmatched parents remain reachable. Without
+include patterns, all files are eligible. Exclusion always wins.
+For example, `--include 'src/' --include '*.py'` includes the src tree and Python
+files anywhere; use `--include 'src/**/*.py'` to restrict to Python files inside src.
 
-This replaces the former regex syntax. For example, `--match '\.go$'` becomes `--match '*.go'`,
-and `--not-match-d 'dist|node_modules|target'` becomes `--not-match-d '{dist,node_modules,target}/'`.
-`|`, `^` and `$` are ordinary characters in globs. `--fullpath` has been removed;
-use a relative path glob such as `--match 'src/**'` directly.
-`-e/--exclude-ext` continues to filter extensions.
+Use `-l/--include-lang` and `--exclude-lang` for exact, case-sensitive language names
+(comma-separated, unknown names are errors). To exclude only filename suffixes,
+use `--exclude '*.{txt,md}'`. Globs treat `|`, `^` and `$` as ordinary characters.
+See [removed interfaces and options](docs/REFACTOR_API.md).
 Keep generated reports outside the scanned tree or explicitly exclude them. `>` overwrites the destination.
 Older releases enabled deduplication by default; use `--dedup` to retain that behavior.
 
@@ -334,7 +335,7 @@ Pass language lists and glob patterns directly when filtering:
 ```go
 result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
     IncludeLangs: []string{"Go", "Python"},
-    ExcludeExts:  []string{"txt"},
+    ExcludeLangs: []string{"Plain Text"},
     Exclude:      []string{"{dist,node_modules,target}/", "*_test.go"},
     Dedup:        true, // Optional: count identical content only once.
 })
@@ -345,59 +346,41 @@ deduplication and `runtime.GOMAXPROCS(0)` workers, capped at 64. `Workers: 1` se
 one worker; explicit values outside 1–64 are rejected, while zero selects automatically.
 An empty path list returns an empty result, not a scan of the current directory.
 
-Filters are prepared once per call. Invalid options return `*gocloc.OptionError` before
-scanning. `Options.Exclude`, `Match`, `NotMatch`, `MatchDir` and `NotMatchDir` use the same
-glob rules as the CLI; errors identify the corresponding field.
-`Processor.Analyze` supports the same fields on `ClocOptions`.
-`AnalyzeFile` and `AnalyzeReader` do not apply path filters.
-The former `ClocOptions.ReMatch`, `ReNotMatch`, `ReMatchDir` and `ReNotMatchDir` fields
-have been replaced by string glob fields without the `Re` prefix. `Fullpath` has been removed
-from both option types; patterns containing `/` already match paths relative to each input root.
-Like the CLI, `ExcludeExts` excludes the detected language associated
-with each extension, including aliases. `IncludeLangs` ignores unknown names; if none of
-the supplied names are recognized, no language inclusion filter is applied.
+Filters and custom definitions are snapshotted once per call. Invalid options return
+`*gocloc.OptionError` before scanning; `Include` and `Exclude` use the CLI glob rules.
+Unknown language names are rejected, and language exclusions take precedence.
+Directory analysis returns statistics. Unreadable inputs are skipped with diagnostics;
+diagnostic writer errors are returned after workers finish.
 
-`NewProcessor` and `ClocOptions` remain available for custom language rules and existing
-callers, with their defaults unchanged: `Workers <= 1` uses one worker, `ClocOptions{}`
-enables deduplication, and `NewClocOptions()` disables it.
-See [examples/files](examples/files/main.go) and [examples/languages](examples/languages/main.go)
-for complete programs.
+For custom rules, use `NewLanguageDefinition` and pass `Options.Definitions` plus
+`Options.Extensions`. Entries add or replace built-ins only for that call. A custom
+definition uses literal legacy comment markers regardless of its name; use
+`NewDefinedLanguages().Langs["Go"]` to select the built-in Go scanner explicitly.
+`LanguageDefinition` stores rules; `Language` stores accumulated results.
+See [examples/files](examples/files/main.go), [examples/languages](examples/languages/main.go)
+and the [API reference and breaking changes](docs/REFACTOR_API.md).
 
-### Library callbacks
+### Synchronous line events
 
-`Analyze` and `Processor.Analyze` run `OnCode`, `OnComment`, and `OnBlank` in workers. With multiple
-workers, callbacks from different files may run concurrently; callers must protect shared state.
-For example, pass these options to `gocloc.Analyze` (the counter uses `sync/atomic`):
+Single-input APIs return `(result, error)`. `AnalyzeFile` opens and closes the file;
+`AnalyzeReader` leaves the reader open. They accept `FileOptions`, without directory
+filters, deduplication or worker settings. To inspect classified lines:
 
 ```go
-var codeLines atomic.Int64
-options := &gocloc.Options{
-    Dedup:  true, // Optional: count identical content only once.
-    OnCode: func(string) { codeLines.Add(1) },
-}
+language := gocloc.NewDefinedLanguages().Langs["Go"]
+result, err := gocloc.AnalyzeReader("sample.go", language, reader, &gocloc.FileOptions{
+    OnLine: func(event gocloc.LineEvent) {
+        fmt.Println(event.Number, event.Kind, event.Text)
+    },
+})
 ```
 
-Calls within one file follow line order; order across files is unspecified. `Workers` limits
-concurrent callback execution as well as file analysis. Set `Workers = 1` for non-overlapping
-callbacks within one `Analyze` call; this does not put callbacks on the caller's goroutine.
-Callbacks must return for `Analyze` to finish, and `Analyze` waits for all callbacks before
-returning, including on errors. `AnalyzeFile` and `AnalyzeReader` remain synchronous.
-This changes the earlier library contract that kept processor callbacks on the caller's goroutine.
-Existing callers must synchronize shared state or explicitly use one worker.
-
-Callbacks follow the deduplication setting. Without deduplication, every copy triggers callbacks
-during analysis; later read errors cannot undo calls already made. With deduplication, workers
-read each source file once while hashing, counting, and recording callback events. Results are
-deduplicated in discovery order, then only the first retained copy's events are replayed in
-callback workers. Failed source reads and discarded copies do not trigger callbacks. Debug
-logs still show actual analysis, including discarded copies.
-
-Deferred events share a 16 MiB in-memory buffer-capacity budget per scan (not a total process
-memory limit). Large buffers spill to private files in the OS temporary directory and are
-removed after replay or exclusion. Queued spools do not hold open file descriptors. Parser
-buffers, individual callback strings, and memory retained by callers are outside this budget.
-Spool write failures exclude the affected file with a diagnostic; replay or cleanup failures
-are returned after workers finish. Already delivered callbacks cannot be rolled back.
+Events run synchronously on the caller's goroutine in physical line order. `Number`
+is one-based; `Kind` is `CodeLine`, `CommentLine` or `BlankLine`. `Text` owns its
+storage and is parser-normalized: whitespace/newlines trimmed, with engine-specific
+BOM handling. On read failure, completed lines and partial counts remain available;
+the failing incomplete line is omitted. There is no cross-file event or dedup guarantee.
+Directory scans have no event buffers, replay workers or temporary event files.
 
 ## Language rule updates
 

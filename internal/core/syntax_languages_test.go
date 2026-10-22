@@ -16,7 +16,7 @@ func TestLanguageCorpus(t *testing.T) {
 		t.Run(fixture.Name, func(t *testing.T) {
 			t.Parallel()
 			language := NewDefinedLanguages().Langs[fixture.Language]
-			if language == nil || syntaxForLanguage(language) == nil {
+			if language == nil || language.syntax == nil {
 				t.Fatalf("missing lexical rules for %s", fixture.Language)
 			}
 			lines := physicalLines(fixture.Source)
@@ -42,10 +42,14 @@ func TestLanguageCorpus(t *testing.T) {
 							gotLines = append(gotLines, line)
 						}
 					}
-					file, err := analyzeReader("sample."+fixture.Extension, language, mode.reader(), (&ClocOptions{
+					file, err := AnalyzeReader("sample."+fixture.Extension, language, mode.reader(), (&FileOptions{
+						OnLine: observeKinds(
+							callback('C'),
+							callback('M'),
+							callback('B'),
+						),
 						Debug: mode.debug, Diagnostics: io.Discard,
-						OnCode: callback('C'), OnComment: callback('M'), OnBlank: callback('B'),
-					}).withDiagnostics())
+					}))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -90,10 +94,26 @@ func FuzzLanguageReader(f *testing.F) {
 			t.Skip()
 		}
 		language := languages.Langs[fixtures[int(index)%len(fixtures)].Language]
-		want, wantErr := analyzeReader("sample", language, strings.NewReader(source), NewClocOptions())
-		got, gotErr := analyzeReader("sample", language, iotest.HalfReader(strings.NewReader(source)), NewClocOptions())
+		want, wantErr := AnalyzeReader(
+			"sample",
+			language,
+			strings.NewReader(source),
+			&FileOptions{},
+		)
+		got, gotErr := AnalyzeReader(
+			"sample",
+			language,
+			iotest.HalfReader(strings.NewReader(source)),
+			&FileOptions{},
+		)
 		if wantErr != nil || gotErr != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("fragmentation changed analysis: %+v/%v versus %+v/%v", got, gotErr, want, wantErr)
+			t.Fatalf(
+				"fragmentation changed analysis: %+v/%v versus %+v/%v",
+				got,
+				gotErr,
+				want,
+				wantErr,
+			)
 		}
 		if got.Code+got.Comments+got.Blanks != int32(len(physicalLines(source))) {
 			t.Fatalf("physical lines were lost or counted twice: %+v", got)

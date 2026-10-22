@@ -34,10 +34,10 @@ func TestWalkGlobPrunesExcludedDirectory(t *testing.T) {
 		t.Skip("current user can read directories without permission")
 	}
 	var diagnostics bytes.Buffer
-	opts := NewClocOptions()
+	opts := &Options{}
 	opts.Diagnostics = &diagnostics
-	opts = opts.withDiagnostics()
-	if err := walkCandidateFiles(root, opts, func(string) error { return nil }); err != nil {
+	state := testRunState(t, opts)
+	if err := walkCandidateFiles(root, state, func(string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(diagnostics.String(), "target") {
@@ -46,21 +46,15 @@ func TestWalkGlobPrunesExcludedDirectory(t *testing.T) {
 	diagnostics.Reset()
 	for _, tc := range []struct {
 		name string
-		opts ClocOptions
+		opts Options
 	}{
-		{name: "exclude", opts: ClocOptions{Exclude: []string{"target/"}}},
-		{name: "not match directory", opts: ClocOptions{NotMatchDir: "target/"}},
+		{name: "exclude", opts: Options{Exclude: []string{"target/"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			diagnostics.Reset()
 			tc.opts.Diagnostics = &diagnostics
-			opts := tc.opts.withDiagnostics()
-			filter, err := preparePathFilter(opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			opts.filter = filter
-			if err := walkCandidateFiles(root, opts, func(path string) error {
+			state := testRunState(t, &tc.opts)
+			if err := walkCandidateFiles(root, state, func(path string) error {
 				t.Errorf("unexpected candidate %q", path)
 				return nil
 			}); err != nil {
@@ -89,25 +83,19 @@ func BenchmarkWalkCandidateFiles(b *testing.B) {
 	}
 	for _, tc := range []struct {
 		name string
-		opts ClocOptions
+		opts Options
 		want int
 	}{
 		{name: "no_filters", want: 512},
-		{name: "exclude", opts: ClocOptions{Exclude: []string{"{dist,node_modules,target}/"}}, want: 256},
-		{name: "not_match_directory", opts: ClocOptions{NotMatchDir: "{dist,node_modules,target}/"}, want: 256},
+		{name: "exclude", opts: Options{Exclude: []string{"{dist,node_modules,target}/"}}, want: 256},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			opts := &tc.opts
-			filter, err := preparePathFilter(opts)
-			if err != nil {
-				b.Fatal(err)
-			}
-			opts.filter = filter
+			state := testRunState(b, &tc.opts)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
 				count := 0
-				if err := walkCandidateFiles(root, opts, func(string) error {
+				if err := walkCandidateFiles(root, state, func(string) error {
 					count++
 					return nil
 				}); err != nil {
@@ -158,7 +146,7 @@ func TestWalkCandidateFilesDefaultTraversal(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := []string{}
-			if err := walkCandidateFiles(tc.root, NewClocOptions(), func(filename string) error {
+			if err := walkCandidateFiles(tc.root, testRunState(t, nil), func(filename string) error {
 				relative, err := filepath.Rel(dir, filename)
 				if err != nil {
 					return err

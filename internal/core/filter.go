@@ -23,63 +23,27 @@ type pathExcluder struct {
 }
 
 type pathFilter struct {
-	exclude     *pathExcluder
-	match       *globRule
-	notMatch    *globRule
-	matchDir    *globRule
-	notMatchDir *globRule
-	hasPaths    bool
+	include  *pathExcluder
+	exclude  *pathExcluder
+	hasPaths bool
 }
 
-func preparePathFilter(opts *ClocOptions) (*pathFilter, error) {
-	hasFiles := opts.Match != "" || opts.NotMatch != ""
-	hasDirectories := opts.MatchDir != "" || opts.NotMatchDir != ""
-	hasFilters := hasFiles || hasDirectories || len(opts.Exclude) > 0
-	if !hasFilters {
+func preparePathFilter(includes, excludes []string) (*pathFilter, error) {
+	if len(includes) == 0 && len(excludes) == 0 {
 		return nil, nil
 	}
-	exclude, err := prepareExcludes(opts.Exclude)
+	include, err := preparePatterns("Include", includes)
 	if err != nil {
 		return nil, err
 	}
-	filter := &pathFilter{exclude: exclude}
-	if exclude != nil {
-		filter.hasPaths = exclude.hasPaths
+	exclude, err := preparePatterns("Exclude", excludes)
+	if err != nil {
+		return nil, err
 	}
-	for _, option := range []struct {
-		field   string
-		pattern string
-		target  **globRule
-		file    bool
-	}{
-		{field: "Match", pattern: opts.Match, target: &filter.match, file: true},
-		{field: "NotMatch", pattern: opts.NotMatch, target: &filter.notMatch, file: true},
-		{field: "MatchDir", pattern: opts.MatchDir, target: &filter.matchDir},
-		{field: "NotMatchDir", pattern: opts.NotMatchDir, target: &filter.notMatchDir},
-	} {
-		if option.pattern == "" {
-			continue
-		}
-		rule, err := prepareGlobRule(option.pattern)
-		directoryFilePattern := option.file && rule.dirOnly
-		if err == nil && directoryFilePattern {
-			err = errors.New("file glob must not end with /; use a directory filter instead")
-		}
-		if err != nil {
-			return nil, &OptionError{
-				Field: option.field,
-				Err:   fmt.Errorf("pattern %q: %w", option.pattern, err),
-			}
-		}
-		*option.target = &rule
-		filter.hasPaths = filter.hasPaths || !rule.nameOnly
-	}
-	// Directory inclusion must also check ancestors of each candidate file.
-	filter.hasPaths = filter.hasPaths || filter.matchDir != nil
-	return filter, nil
+	return &pathFilter{include: include, exclude: exclude, hasPaths: include != nil || (exclude != nil && exclude.hasPaths)}, nil
 }
 
-func prepareExcludes(patterns []string) (*pathExcluder, error) {
+func preparePatterns(field string, patterns []string) (*pathExcluder, error) {
 	if len(patterns) == 0 {
 		return nil, nil
 	}
@@ -87,15 +51,7 @@ func prepareExcludes(patterns []string) (*pathExcluder, error) {
 	for i, pattern := range patterns {
 		rule, err := prepareGlobRule(pattern)
 		if err != nil {
-			return nil, &OptionError{
-				Field: "Exclude",
-				Err: fmt.Errorf(
-					"pattern %d %q: %w",
-					i+1,
-					pattern,
-					err,
-				),
-			}
+			return nil, &OptionError{Field: field, Err: fmt.Errorf("pattern %d %q: %w", i+1, pattern, err)}
 		}
 		filter.rules = append(filter.rules, rule)
 		filter.hasPaths = filter.hasPaths || !rule.nameOnly
@@ -170,16 +126,6 @@ func (rule *globRule) matches(name, relative string, isDir bool) bool {
 	return doublestar.MatchUnvalidated(rule.pattern, target)
 }
 
-func (filter *pathFilter) excluded(name, relative string, isDir bool) bool {
-	if filter.exclude.excluded(name, relative, isDir) {
-		return true
-	}
-	if isDir {
-		return filter.notMatchDir.matches(name, relative, true)
-	}
-	return filter.notMatch.matches(name, relative, false)
-}
-
 type rootFilter struct {
 	filter       *pathFilter
 	root         string
@@ -200,7 +146,7 @@ func (filter *pathFilter) forRoot(root string, isDir bool) (rootFilter, error) {
 		filter:       filter,
 		root:         root,
 		rootName:     name,
-		excludedRoot: filter.excluded(name, "", true),
+		excludedRoot: filter.exclude.excluded(name, "", true),
 	}, nil
 }
 
@@ -221,22 +167,21 @@ func (scope *rootFilter) accepts(filename string, entry fs.DirEntry) (bool, erro
 		}
 		relative = filepath.ToSlash(pathFromRoot)
 	}
-	if filter.excluded(name, relative, entry.IsDir()) {
+	if filter.exclude.excluded(name, relative, entry.IsDir()) {
 		return false, nil
 	}
 	if entry.IsDir() {
 		return true, nil
 	}
-	if filter.match != nil && !filter.match.matches(name, relative, false) {
-		return false, nil
-	}
-	if filter.matchDir == nil {
+	if filter.include == nil || filter.include.excluded(name, relative, false) {
 		return true, nil
 	}
+	// An included directory includes every descendant, without pruning unmatched
+	// ancestors while walking. Root names participate only in unanchored rules.
 	for dir := path.Dir(relative); dir != "."; dir = path.Dir(dir) {
-		if filter.matchDir.matches(path.Base(dir), dir, true) {
+		if filter.include.excluded(path.Base(dir), dir, true) {
 			return true, nil
 		}
 	}
-	return filter.matchDir.matches(scope.rootName, "", true), nil
+	return filter.include.excluded(scope.rootName, "", true), nil
 }

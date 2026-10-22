@@ -73,7 +73,7 @@ func TestGlobExclusionSemantics(t *testing.T) {
 		{name: "hash literal", pattern: "#target", relative: "#target", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			filter, err := prepareExcludes([]string{tc.pattern})
+			filter, err := preparePatterns("Exclude", []string{tc.pattern})
 			if err != nil {
 				t.Fatal(err)
 			}

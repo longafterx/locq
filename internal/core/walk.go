@@ -20,7 +20,7 @@ func isVCSDir(path string) bool {
 	return false
 }
 
-func walkCandidateFiles(root string, opts *ClocOptions, visit func(string) error) error {
+func walkCandidateFiles(root string, opts *runState, visit func(string) error) error {
 	vcsInRoot := isVCSDir(root)
 	var scope rootFilter
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {

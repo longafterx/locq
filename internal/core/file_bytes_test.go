@@ -13,7 +13,7 @@ import (
 	"testing/iotest"
 )
 
-func checkReaderAgainstReference(t testing.TB, language *Language, content string) {
+func checkReaderAgainstReference(t testing.TB, language *LanguageDefinition, content string) {
 	t.Helper()
 	if language.syntax != nil {
 		// The frozen oracle contains the old C/Go lexical bugs. Keep testing
@@ -30,30 +30,54 @@ func checkReaderAgainstReference(t testing.TB, language *Language, content strin
 		lines       []string
 		diagnostics bytes.Buffer
 	}
-	observe := func(parse func(string, *Language, io.Reader, *ClocOptions) (*ClocFile, error)) observation {
+	observe := func(parse func(string, *LanguageDefinition, io.Reader, *FileOptions) (*ClocFile, error)) observation {
 		got := observation{lines: []string{}}
-		opts := &ClocOptions{
+		opts := &FileOptions{
+			OnLine: observeKinds(
+				func(line string) { got.lines = append(got.lines, "code:"+line) },
+				func(line string) { got.lines = append(got.lines, "comment:"+line) },
+				func(line string) { got.lines = append(got.lines, "blank:"+line) },
+			),
 			Debug:       true,
 			Diagnostics: &got.diagnostics,
-			OnCode:      func(line string) { got.lines = append(got.lines, "code:"+line) },
-			OnComment:   func(line string) { got.lines = append(got.lines, "comment:"+line) },
-			OnBlank:     func(line string) { got.lines = append(got.lines, "blank:"+line) },
 		}
-		got.file, got.err = parse("sample", language, strings.NewReader(content), opts)
+		got.file, got.err = parse(
+			"sample",
+			language,
+			strings.NewReader(content),
+			opts,
+		)
 		return got
 	}
 	want := observe(referenceAnalyzeReader)
-	got := observe(analyzeReader)
+	got := observe(AnalyzeReader)
 	if !reflect.DeepEqual(got.file, want.file) || fmt.Sprint(got.err) != fmt.Sprint(want.err) {
-		t.Fatalf("counts/error = %+v/%v, want %+v/%v", got.file, got.err, want.file, want.err)
+		t.Fatalf(
+			"counts/error = %+v/%v, want %+v/%v",
+			got.file,
+			got.err,
+			want.file,
+			want.err,
+		)
 	}
 	if !reflect.DeepEqual(got.lines, want.lines) || got.diagnostics.String() != want.diagnostics.String() {
 		t.Fatal("callback contents/order or debug output differ from the reference parser")
 	}
 	// Also check the allocation-sensitive path without callbacks or debug output.
-	fast, err := analyzeReader("sample", language, strings.NewReader(content), &ClocOptions{})
+	fast, err := AnalyzeReader(
+		"sample",
+		language,
+		strings.NewReader(content),
+		&FileOptions{},
+	)
 	if !reflect.DeepEqual(fast, want.file) || fmt.Sprint(err) != fmt.Sprint(want.err) {
-		t.Fatalf("plain counts/error = %+v/%v, want %+v/%v", fast, err, want.file, want.err)
+		t.Fatalf(
+			"plain counts/error = %+v/%v, want %+v/%v",
+			fast,
+			err,
+			want.file,
+			want.err,
+		)
 	}
 }
 
@@ -90,9 +114,22 @@ func TestAnalyzeReaderRetainsCallbackStrings(t *testing.T) {
 	for i := range 300 {
 		want = append(want, fmt.Sprintf("value%03d = %s", i, strings.Repeat("x", 50)))
 	}
-	opts := &ClocOptions{OnCode: func(line string) { lines = append(lines, line) }}
+	opts := &FileOptions{
+		OnLine: observeKinds(
+			func(line string) { lines = append(lines, line) },
+			nil,
+			nil,
+		)}
 	content := strings.Join(want, "\n")
-	got := AnalyzeReader("sample.go", NewDefinedLanguages().Langs["Go"], strings.NewReader(content), opts)
+	got, readErr := AnalyzeReader(
+		"sample.go",
+		NewDefinedLanguages().Langs["Go"],
+		strings.NewReader(content),
+		opts,
+	)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if got.Code != int32(len(want)) || !reflect.DeepEqual(lines, want) {
 		t.Fatal("callbacks must own strings after the read buffer is reused")
 	}
@@ -101,7 +138,12 @@ func TestAnalyzeReaderRetainsCallbackStrings(t *testing.T) {
 func TestAnalyzeReaderFragmentedInput(t *testing.T) {
 	content := "\u2003// comment\r\n" + strings.Repeat("x", 8192) + "\n/*\n\n*/\nlast"
 	language := NewDefinedLanguages().Langs["Go"]
-	want, err := referenceAnalyzeReader("sample", language, strings.NewReader(content), &ClocOptions{})
+	want, err := referenceAnalyzeReader(
+		"sample",
+		language,
+		strings.NewReader(content),
+		&FileOptions{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +153,19 @@ func TestAnalyzeReaderFragmentedInput(t *testing.T) {
 		"data eof": iotest.DataErrReader(strings.NewReader(content)),
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := analyzeReader("sample", language, source, &ClocOptions{})
+			got, err := AnalyzeReader(
+				"sample",
+				language,
+				source,
+				&FileOptions{},
+			)
 			if err != nil || !reflect.DeepEqual(got, want) {
-				t.Fatalf("got %+v/%v, want %+v", got, err, want)
+				t.Fatalf(
+					"got %+v/%v, want %+v",
+					got,
+					err,
+					want,
+				)
 			}
 		})
 	}
@@ -143,17 +195,33 @@ func TestDetectAndAnalyzeFileReusesBufferAcrossFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, skip := range []bool{false, true} {
-				opts := &ClocOptions{SkipDuplicated: skip}
-				got := detectAndAnalyzeFile(fileCandidate{path: path}, languages, opts, reader)
+				opts := testRunState(t, &Options{Dedup: !skip})
+				got := detectAndAnalyzeFile(
+					fileCandidate{path: path},
+					languages,
+					opts,
+					reader,
+				)
 				if tc.lang == "" {
 					if got.err != nil || !got.ignored {
 						t.Fatalf("excluded file: %+v", got)
 					}
 					continue
 				}
-				want, err := referenceAnalyzeReader(path, languages.Langs[tc.lang], strings.NewReader(tc.content), opts)
+				want, err := referenceAnalyzeReader(
+					path,
+					languages.Langs[tc.lang],
+					strings.NewReader(tc.content),
+					&FileOptions{},
+				)
 				if err != nil || got.err != nil || got.ignored || !reflect.DeepEqual(got.clocFile, want) {
-					t.Fatalf("got %+v/%+v, want %+v/%v", got, got.clocFile, want, err)
+					t.Fatalf(
+						"got %+v/%+v, want %+v/%v",
+						got,
+						got.clocFile,
+						want,
+						err,
+					)
 				}
 				if !skip && got.digest != md5.Sum([]byte(tc.content)) {
 					t.Fatal("buffer reuse changed the digest")
@@ -171,7 +239,7 @@ func FuzzAnalyzeReaderMatchesReference(f *testing.F) {
 		f.Add(content, uint8(0))
 	}
 	defined := NewDefinedLanguages()
-	languages := []*Language{defined.Langs["Go"], defined.Langs["Python"], defined.Langs["ATS"], defined.Langs["Perl"]}
+	languages := []*LanguageDefinition{defined.Langs["Go"], defined.Langs["Python"], defined.Langs["ATS"], defined.Langs["Perl"]}
 	f.Fuzz(func(t *testing.T, content string, index uint8) {
 		checkReaderAgainstReference(t, languages[int(index)%len(languages)], content)
 	})
@@ -179,7 +247,7 @@ func FuzzAnalyzeReaderMatchesReference(f *testing.F) {
 
 func BenchmarkAnalyzeReader(b *testing.B) {
 	language := NewDefinedLanguages().Langs["Go"]
-	opts := NewClocOptions()
+	opts := &FileOptions{}
 	for _, tc := range []struct {
 		name string
 		body string
@@ -192,7 +260,12 @@ func BenchmarkAnalyzeReader(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.body)))
 			for range b.N {
-				result, err := analyzeReader("sample.go", language, strings.NewReader(tc.body), opts)
+				result, err := AnalyzeReader(
+					"sample.go",
+					language,
+					strings.NewReader(tc.body),
+					opts,
+				)
 				if err != nil || result.Code+result.Comments+result.Blanks == 0 {
 					b.Fatalf("invalid analysis: %+v/%v", result, err)
 				}

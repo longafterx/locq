@@ -6,8 +6,7 @@ import (
 	"github.com/longafterx/gocloc/internal/core"
 )
 
-// Public types remain aliases so existing callers can use the same fields,
-// methods, and function signatures while implementation lives in internal/core.
+// Implementation details live in internal/core.
 type (
 	ClocFile            = core.ClocFile
 	ClocFiles           = core.ClocFiles
@@ -15,7 +14,10 @@ type (
 	Language            = core.Language
 	Languages           = core.Languages
 	DefinedLanguages    = core.DefinedLanguages
-	ClocOptions         = core.ClocOptions
+	LanguageDefinition  = core.LanguageDefinition
+	FileOptions         = core.FileOptions
+	LineEvent           = core.LineEvent
+	LineKind            = core.LineKind
 	Options             = core.Options
 	OptionError         = core.OptionError
 	Result              = core.Result
@@ -30,51 +32,35 @@ type (
 )
 
 const (
+	CodeLine           = core.CodeLine
+	CommentLine        = core.CommentLine
+	BlankLine          = core.BlankLine
 	MaxWorkers         = core.MaxWorkers
 	XMLResultWithLangs = core.XMLResultWithLangs
 	XMLResultWithFiles = core.XMLResultWithFiles
 )
 
-// Exts remains mutable for compatibility with callers that add or replace
-// language-extension mappings. Public analysis calls use its current value.
-var Exts = core.Exts
-
-// Processor retains the historical constructor and analysis interface.
-type Processor struct {
-	langs *DefinedLanguages
-	opts  *ClocOptions
-}
-
 func Analyze(paths []string, opts *Options) (*Result, error) {
-	return core.AnalyzeWithExts(paths, opts, Exts)
+	return core.Analyze(paths, opts)
 }
 
-func NewProcessor(langs *DefinedLanguages, opts *ClocOptions) *Processor {
-	return &Processor{langs: langs, opts: opts}
+func NewLanguageDefinition(name string, lineComments []string, blocks [][]string) *LanguageDefinition {
+	return core.NewLanguageDefinition(name, lineComments, blocks)
 }
 
-func (p *Processor) Analyze(paths []string) (*Result, error) {
-	return core.NewProcessorWithExts(p.langs, p.opts, Exts).Analyze(paths)
-}
+func NewDefinedLanguages() *DefinedLanguages { return core.NewDefinedLanguages() }
 
-func NewClocOptions() *ClocOptions {
-	return core.NewClocOptions()
-}
-
-func NewLanguage(name string, lineComments []string, multiLines [][]string) *Language {
-	return core.NewLanguage(name, lineComments, multiLines)
-}
-
-func NewDefinedLanguages() *DefinedLanguages {
-	return core.NewDefinedLanguagesWithExtensionSource(&Exts)
-}
-
-func AnalyzeFile(filename string, language *Language, opts *ClocOptions) *ClocFile {
+func AnalyzeFile(filename string, language *LanguageDefinition, opts *FileOptions) (*ClocFile, error) {
 	return core.AnalyzeFile(filename, language, opts)
 }
 
-func AnalyzeReader(filename string, language *Language, reader io.Reader, opts *ClocOptions) *ClocFile {
-	return core.AnalyzeReader(filename, language, reader, opts)
+func AnalyzeReader(filename string, language *LanguageDefinition, reader io.Reader, opts *FileOptions) (*ClocFile, error) {
+	return core.AnalyzeReader(
+		filename,
+		language,
+		reader,
+		opts,
+	)
 }
 
 func NewJSONLanguagesResultFromCloc(total *Language, languages Languages) JSONLanguagesResult {

@@ -10,7 +10,7 @@ import (
 func main() {
 	result, err := gocloc.Analyze([]string{"."}, &gocloc.Options{
 		IncludeLangs: []string{"Go", "Python"},
-		NotMatchDir:  `(^|[/\\])(dist|node_modules|target)([/\\]|$)`,
+		Exclude:      []string{"{dist,node_modules,target}/"},
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gocloc: %v\n", err)

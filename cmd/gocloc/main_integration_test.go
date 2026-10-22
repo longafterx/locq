@@ -43,33 +43,31 @@ func TestCLIIntegration(t *testing.T) {
 			{name: "default", args: []string{"."}, files: 4, code: 9},
 			{name: "deduplication", args: []string{"--dedup", "."}, files: 3, code: 7},
 			{name: "explicit no deduplication", args: []string{"--dedup=false", "."}, files: 4, code: 9},
-			{name: "legacy no deduplication", args: []string{"--skip-duplicated", "."}, files: 4, code: 9},
-			{name: "legacy deduplication", args: []string{"--skip-duplicated=false", "."}, files: 3, code: 7},
 			{name: "one worker", args: []string{"--workers=1", "."}, files: 4, code: 9},
 			{name: "multiple paths", args: []string{"src", "scripts"}, files: 3, code: 8},
 			{name: "interspersed", args: []string{"src", "--workers", "2", "scripts"}, files: 3, code: 8},
-			{name: "exclude directory", args: []string{"--not-match-d=target", "."}, files: 3, code: 8},
-			{name: "include directory", args: []string{"--match-d=scripts", "."}, files: 1, code: 4},
-			{name: "include filename", args: []string{"--match=*.py", "."}, files: 1, code: 4},
-			{name: "exclude filename", args: []string{"--not-match=*.py", "."}, files: 3, code: 5},
-			{name: "relative path glob", args: []string{"--match=scripts/**/*.py", "."}, files: 1, code: 4},
-			{name: "single level path", args: []string{"--match=src/*.go", "."}, files: 2, code: 4},
-			{name: "brace alternatives", args: []string{"--match=*.{go,py}", "."}, files: 4, code: 9},
-			{name: "directory braces", args: []string{"--match-d={src,scripts}/", "."}, files: 3, code: 8},
-			{name: "anchored directory", args: []string{"--match-d=/src/", "."}, files: 2, code: 4},
-			{name: "include input directory", args: []string{"--match-d=src/", "src"}, files: 2, code: 4},
+			{name: "exclude directory", args: []string{"--exclude=target/", "."}, files: 3, code: 8},
+			{name: "include directory", args: []string{"--include=scripts/", "."}, files: 1, code: 4},
+			{name: "include filename", args: []string{"--include=*.py", "."}, files: 1, code: 4},
+			{name: "exclude filename", args: []string{"--exclude=*.py", "."}, files: 3, code: 5},
+			{name: "relative path glob", args: []string{"--include=scripts/**/*.py", "."}, files: 1, code: 4},
+			{name: "single level path", args: []string{"--include=src/*.go", "."}, files: 2, code: 4},
+			{name: "brace alternatives", args: []string{"--include=*.{go,py}", "."}, files: 4, code: 9},
+			{name: "directory braces", args: []string{"--include={src,scripts}/", "."}, files: 3, code: 8},
+			{name: "anchored directory", args: []string{"--include=/src/", "."}, files: 2, code: 4},
+			{name: "include input directory", args: []string{"--include=src/", "src"}, files: 2, code: 4},
 			{
 				name: "include explicit file parent",
-				args: []string{"--match-d=scripts/", "--match=/run.py", "scripts/run.py"}, files: 1, code: 4,
+				args: []string{"--include=/run.py", "scripts/run.py"}, files: 1, code: 4,
 			},
 			{
 				name: "exclude explicit file parent",
-				args: []string{"--not-match-d=target/", "target/generated.go"},
+				args: []string{"--exclude=target/", "target/generated.go"},
 			},
-			{name: "directory whole name", args: []string{"--not-match-d=arget", "."}, files: 4, code: 9},
-			{name: "file whole name", args: []string{"--match=run", "."}},
-			{name: "regex no longer interpreted", args: []string{"--match=^run.py$", "."}},
-			{name: "exclude extension", args: []string{"--exclude-ext=go,txt", "."}, files: 1, code: 4},
+			{name: "directory whole name", args: []string{"--exclude=arget/", "."}, files: 4, code: 9},
+			{name: "file whole name", args: []string{"--include=run", "."}},
+			{name: "regex no longer interpreted", args: []string{"--include=^run.py$", "."}},
+			{name: "exclude extension", args: []string{"--exclude-lang=Go,Plain Text", "."}, files: 1, code: 4},
 			{name: "include languages", args: []string{"--include-lang=Python,JSON", "."}, files: 1, code: 4},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -116,8 +114,8 @@ func TestCLIIntegration(t *testing.T) {
 			{
 				name: "directory and filename glob flags",
 				args: []string{
-					"--not-match-d={dist,node_modules,target}/",
-					"--not-match=*_test.go",
+					"--exclude={dist,node_modules,target}/",
+					"--exclude=*_test.go",
 				},
 			},
 		} {
@@ -165,8 +163,8 @@ func TestCLIIntegration(t *testing.T) {
 			},
 			{
 				name:  "include and exclude",
-				long:  []string{"--include-lang=Go,Python", "--exclude-ext=go,txt", "--output-type=json", "."},
-				short: []string{"-l", "Go,Python", "-e", "go,txt", "-o=json", "."},
+				long:  []string{"--include-lang=Go,Python", "--exclude-lang=Go,Plain Text", "--output-type=json", "."},
+				short: []string{"-l", "Go,Python", "--exclude-lang", "Go,Plain Text", "-o=json", "."},
 			},
 			{
 				name:  "mixed forms and paths",
@@ -196,13 +194,13 @@ func TestCLIIntegration(t *testing.T) {
 
 	t.Run("errors", func(t *testing.T) {
 		for _, args := range [][]string{
-			{"--unknown"}, {"--workers"}, {"--workers=0"}, {"--workers=-1", "--version"},
-			{"--sort=unknown", "."}, {"--by-file", "--sort=files", "."}, {"--match=[", "."},
-			{"-w0", "-V"}, {"-w65", "-L"}, {"-sunknown", "."}, {"-f", "-sfiles", "."},
+			{"--unknown"}, {"--workers"}, {"--workers=-1", "--version"},
+			{"--sort=unknown", "."}, {"--by-file", "--sort=files", "."}, {"--include=[", "."},
+			{"-w65", "-L"}, {"-sunknown", "."}, {"-f", "-sfiles", "."},
 			{"--dedup", "--skip-duplicated", "."}, {"--dedup=invalid", "."},
 			{"--exclude=", "."}, {"--exclude=[", "."}, {"--fullpath", "."},
 			{"--match=src/", "."}, {"--not-match=src/", "."},
-			{"--not-match=[", "."}, {"--match-d=[", "."}, {"--not-match-d=[", "."},
+			{"--exclude=[", "."}, {"--include=[/", "."}, {"--exclude=[/", "."},
 		} {
 			t.Run(strings.Join(args, " "), func(t *testing.T) {
 				stdout, stderr, err := runCLI(binary, dir, args)
@@ -259,16 +257,16 @@ func TestCLIIntegration(t *testing.T) {
 			// for byte-for-byte comparisons. Default tie order is unspecified.
 			{
 				name: "filters",
-				args: []string{"--not-match-d=target", "--include-lang=Go,Python", "--sort=name", "."},
+				args: []string{"--exclude=target/", "--include-lang=Go,Python", "--sort=name", "."},
 			},
-			{name: "no deduplication", args: []string{"--skip-duplicated", "--sort=name", "."}},
-			{name: "deduplication", args: []string{"--skip-duplicated=false", "--sort=name", "."}},
+			{name: "no deduplication", args: []string{"--dedup=false", "--sort=name", "."}},
+			{name: "deduplication", args: []string{"--dedup", "--sort=name", "."}},
 			{name: "serial", args: []string{"--workers=1", "."}},
 			{name: "parallel", args: []string{"--workers=8", "."}},
 			{name: "decimal leading zero", args: []string{"--workers=08", "."}},
 			{name: "interspersed", args: []string{"src", "--workers", "2", "scripts", "--sort=name"}},
-			{name: "exclude extensions", args: []string{"--exclude-ext=py,txt", "."}},
-			{name: "include directory", args: []string{"--match-d=src", "."}},
+			{name: "exclude extensions", args: []string{"--exclude-lang=Python,Plain Text", "."}},
+			{name: "include directory", args: []string{"--include=src/", "."}},
 			{name: "repeated option", args: []string{"--include-lang=Go", "--include-lang=Python", "."}},
 		}
 		for _, format := range []string{"default", "json", "cloc-xml", "markdown", "sloccount"} {
@@ -312,7 +310,7 @@ func TestCLIIntegration(t *testing.T) {
 				}
 				// Older CLIs enabled deduplication by default. Align the counting
 				// mode while allowing an explicit legacy flag below to override it.
-				baselineArgs := append([]string{"--skip-duplicated=true"}, tc.args...)
+				baselineArgs := legacyCLIArgs(tc.args)
 				before, oldStderr, oldErr := runCLI(baseline, dir, baselineArgs)
 				if oldErr != nil || newErr != nil {
 					t.Fatalf("before: %v %s; after: %v %s", oldErr, oldStderr, newErr, newStderr)
@@ -352,4 +350,24 @@ func runCLI(binary, dir string, args []string) (string, string, error) {
 	command.Stderr = &stderr
 	err := command.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+// Translate only deliberately changed options for byte-for-byte output checks.
+// Production code has no compatibility path; this adapter belongs to the oracle.
+func legacyCLIArgs(args []string) []string {
+	result := []string{"--skip-duplicated=true"}
+	for _, arg := range args {
+		switch arg {
+		case "--dedup":
+			arg = "--skip-duplicated=false"
+		case "--dedup=false":
+			arg = "--skip-duplicated=true"
+		case "--exclude-lang=Python,Plain Text":
+			arg = "--exclude-ext=py,txt"
+		case "--include=src/":
+			arg = "--match-d=src/"
+		}
+		result = append(result, arg)
+	}
+	return result
 }

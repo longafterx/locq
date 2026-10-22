@@ -108,22 +108,32 @@ func TestAnalyzeReaderCommentContext(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var codeCalls, commentCalls, blankCalls int32
-			got := AnalyzeReader(
+			got, readErr := AnalyzeReader(
 				"sample",
 				NewDefinedLanguages().Langs[tt.language],
 				strings.NewReader(tt.content),
-				&ClocOptions{
-					OnCode:    func(string) { codeCalls++ },
-					OnComment: func(string) { commentCalls++ },
-					OnBlank:   func(string) { blankCalls++ },
+				&FileOptions{
+					OnLine: observeKinds(
+						func(string) { codeCalls++ },
+						func(string) { commentCalls++ },
+						func(string) { blankCalls++ },
+					),
 				},
 			)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 			if got.Code != tt.code || got.Comments != tt.comments || got.Blanks != tt.blanks {
 				t.Fatalf("got code=%d comment=%d blank=%d; want code=%d comment=%d blank=%d",
 					got.Code, got.Comments, got.Blanks, tt.code, tt.comments, tt.blanks)
 			}
 			if codeCalls != tt.code || commentCalls != tt.comments || blankCalls != tt.blanks {
-				t.Fatalf("callback counts = %d/%d/%d", codeCalls, commentCalls, blankCalls)
+				t.Fatalf(
+					"callback counts = %d/%d/%d",
+					codeCalls,
+					commentCalls,
+					blankCalls,
+				)
 			}
 		})
 	}
@@ -140,9 +150,22 @@ func FuzzAnalyzeReaderQuotedCommentMarkers(f *testing.F) {
 		source := "value = " + strconv.Quote(content) + "; // /* ignored\n" +
 			"next = 1;\n/* real comment */\n\n"
 		for _, name := range []string{"C", "C Header", "Go"} {
-			got := AnalyzeReader("sample", languages.Langs[name], strings.NewReader(source), &ClocOptions{})
+			got, readErr := AnalyzeReader(
+				"sample",
+				languages.Langs[name],
+				strings.NewReader(source),
+				&FileOptions{},
+			)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 			if got.Code != 2 || got.Comments != 1 || got.Blanks != 1 {
-				t.Fatalf("%s: quoted input %q produced %+v", name, content, got)
+				t.Fatalf(
+					"%s: quoted input %q produced %+v",
+					name,
+					content,
+					got,
+				)
 			}
 		}
 	})

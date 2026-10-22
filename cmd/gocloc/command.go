@@ -9,50 +9,28 @@ import (
 	"strings"
 
 	"github.com/longafterx/gocloc"
+	"github.com/longafterx/gocloc/internal/core"
 	"github.com/spf13/cobra"
 )
 
 // CmdOptions is gocloc command options.
 type CmdOptions struct {
-	ByFile         bool
-	SortTag        string
-	OutputType     string
-	ExcludeExt     string
-	Exclude        []string
-	IncludeLang    string
-	Match          string
-	NotMatch       string
-	MatchDir       string
-	NotMatchDir    string
-	Debug          bool
-	Workers        *int
-	Dedup          bool
-	SkipDuplicated bool
-	ShowLang       bool
-	ShowVersion    bool
-}
-
-func configureWorkerOptions(opts CmdOptions, analysisOpts *gocloc.Options) error {
-	if opts.Workers == nil {
-		analysisOpts.Workers = 0
-		return nil
-	}
-	if *opts.Workers < 0 {
-		return fmt.Errorf("--workers must be greater than or equal to zero")
-	}
-	if *opts.Workers == 0 {
-		return fmt.Errorf("--workers must be between 1 and %d", gocloc.MaxWorkers)
-	}
-	if *opts.Workers > gocloc.MaxWorkers {
-		return fmt.Errorf("--workers must not exceed %d", gocloc.MaxWorkers)
-	}
-	analysisOpts.Workers = *opts.Workers
-	return nil
+	ByFile      bool
+	SortTag     string
+	OutputType  string
+	ExcludeLang string
+	Include     []string
+	Exclude     []string
+	IncludeLang string
+	Debug       bool
+	Workers     int
+	Dedup       bool
+	ShowLang    bool
+	ShowVersion bool
 }
 
 func newRootCommand() *cobra.Command {
 	var opts CmdOptions
-	var workerCount int
 	command := &cobra.Command{
 		Use:   "gocloc [OPTIONS] PATH[...]",
 		Short: "A fast, parallel source code line counter",
@@ -66,10 +44,10 @@ func newRootCommand() *cobra.Command {
   gocloc --exclude '{dist,node_modules,target}/' .
 
   # Include Go files and exclude tests with globs
-  gocloc --match '*.go' --not-match '*_test.go' .
+  gocloc --include '*.go' --exclude '*_test.go' .
 
   # Include a directory tree and exclude generated directories
-  gocloc --match-d 'src/' --not-match-d '{dist,node_modules,target}/' .
+  gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
 
   # Count only Go and Python files
   gocloc -l Go,Python .
@@ -88,15 +66,9 @@ func newRootCommand() *cobra.Command {
 		DisableSuggestions: true,
 		CompletionOptions:  cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, paths []string) error {
-			if cmd.Flags().Changed("workers") {
-				opts.Workers = &workerCount
-			}
-			if cmd.Flags().Changed("skip-duplicated") {
-				opts.Dedup = !opts.SkipDuplicated
-			}
-			analysisOpts := &gocloc.Options{}
-			if err := configureWorkerOptions(opts, analysisOpts); err != nil {
-				return err
+			analysisOpts := &gocloc.Options{Workers: opts.Workers}
+			if err := core.ValidateWorkers(opts.Workers); err != nil {
+				return fmt.Errorf("--workers %w", err)
 			}
 			if opts.ShowVersion {
 				info, _ := debug.ReadBuildInfo()
@@ -153,12 +125,11 @@ Examples:
 		OutputTypeDefault,
 		"output type [values: default,markdown,cloc-xml,sloccount,json]",
 	)
-	flags.StringVarP(
-		&opts.ExcludeExt,
-		"exclude-ext",
-		"e",
+	flags.StringVar(
+		&opts.ExcludeLang,
+		"exclude-lang",
 		"",
-		"exclude file name extensions (separated commas)",
+		"exclude language names (separated commas)",
 	)
 	flags.StringArrayVar(
 		&opts.Exclude,
@@ -173,30 +144,7 @@ Examples:
 		"",
 		"include language names (separated commas)",
 	)
-	flags.StringVar(
-		&opts.Match,
-		"match",
-		"",
-		"include files matching a glob (e.g. '*.go' or 'src/**/*.go')",
-	)
-	flags.StringVar(
-		&opts.NotMatch,
-		"not-match",
-		"",
-		"exclude files matching a glob (e.g. '*_test.go')",
-	)
-	flags.StringVar(
-		&opts.MatchDir,
-		"match-d",
-		"",
-		"include matching directories and their contents (glob)",
-	)
-	flags.StringVar(
-		&opts.NotMatchDir,
-		"not-match-d",
-		"",
-		"exclude matching directories and their contents (glob)",
-	)
+	flags.StringArrayVar(&opts.Include, "include", nil, "include matching files or directory trees (glob; repeatable; patterns are ORed)")
 	flags.BoolVar(
 		&opts.Debug,
 		"debug",
@@ -204,10 +152,10 @@ Examples:
 		"log analysis activity to stderr (files may interleave)",
 	)
 	flags.VarP(
-		(*workerCountValue)(&workerCount),
+		(*workerCountValue)(&opts.Workers),
 		"workers",
 		"w",
-		"number of file analysis workers (1-64; default: automatic)",
+		"number of file analysis workers (0=automatic, 1-64)",
 	)
 	flags.BoolVar(
 		&opts.Dedup,
@@ -215,13 +163,6 @@ Examples:
 		false,
 		"count files with identical contents only once",
 	)
-	flags.BoolVar(
-		&opts.SkipDuplicated,
-		"skip-duplicated",
-		false,
-		"compatibility option: skip duplicate detection; =false enables it (prefer --dedup)",
-	)
-	command.MarkFlagsMutuallyExclusive("dedup", "skip-duplicated")
 	flags.BoolVarP(
 		&opts.ShowLang,
 		"show-lang",
@@ -276,13 +217,10 @@ func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, 
 	if opts.ByFile && opts.SortTag == "files" {
 		return fmt.Errorf("`--sort files` option cannot be used in conjunction with the `--by-file` option")
 	}
-	analysisOpts.ExcludeExts = strings.Split(opts.ExcludeExt, ",")
+	analysisOpts.ExcludeLangs = splitLanguageNames(opts.ExcludeLang)
 	analysisOpts.Exclude = opts.Exclude
-	analysisOpts.IncludeLangs = strings.Split(opts.IncludeLang, ",")
-	analysisOpts.Match = opts.Match
-	analysisOpts.NotMatch = opts.NotMatch
-	analysisOpts.MatchDir = opts.MatchDir
-	analysisOpts.NotMatchDir = opts.NotMatchDir
+	analysisOpts.Include = opts.Include
+	analysisOpts.IncludeLangs = splitLanguageNames(opts.IncludeLang)
 	analysisOpts.Debug = opts.Debug
 	analysisOpts.Dedup = opts.Dedup
 
@@ -291,9 +229,8 @@ func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, 
 		var optionErr *gocloc.OptionError
 		if errors.As(err, &optionErr) {
 			flag := map[string]string{
-				"Exclude": "exclude",
-				"Match":   "match", "NotMatch": "not-match",
-				"MatchDir": "match-d", "NotMatchDir": "not-match-d",
+				"Exclude": "exclude", "Include": "include", "Workers": "workers",
+				"IncludeLangs": "include-lang", "ExcludeLangs": "exclude-lang",
 			}[optionErr.Field]
 			if flag != "" {
 				return fmt.Errorf("invalid --%s: %w", flag, optionErr.Err)
@@ -303,4 +240,11 @@ func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, 
 	}
 
 	return newOutputBuilder(result, &opts, out).WriteResult()
+}
+
+func splitLanguageNames(value string) []string {
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, ",")
 }

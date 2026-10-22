@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bytes"
 	"crypto/md5"
 	"errors"
 	"fmt"
@@ -9,8 +8,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/longafterx/gocloc/internal/lexer"
 )
@@ -61,25 +58,36 @@ func (cf ClocFiles) SortByCode() {
 	sort.Slice(cf, sortFunc)
 }
 
-// AnalyzeFile analyzes a file and reports failures through opts.Diagnostics.
-// Its signature is retained for callers; Processor excludes failed files.
-func AnalyzeFile(filename string, language *Language, opts *ClocOptions) *ClocFile {
-	opts = opts.withDiagnostics()
-	file, err := analyzeFile(filename, language, opts)
-	opts.warn(err)
-	if file == nil {
-		return &ClocFile{Name: filename}
+// AnalyzeFile synchronously analyzes a single file using explicit rules. It
+// returns open, read, close and diagnostic errors; counts may be partial.
+func AnalyzeFile(filename string, language *LanguageDefinition, opts *FileOptions) (*ClocFile, error) {
+	definition, state, err := prepareFile(language, opts)
+	if err != nil {
+		return nil, err
 	}
-	return file
-}
-
-func analyzeFile(filename string, language *Language, opts *ClocOptions) (*ClocFile, error) {
 	fp, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
-	file, readErr := analyzeReader(filename, language, fp, opts)
-	return file, errors.Join(readErr, fp.Close())
+	file, readErr := analyzeReader(
+		filename,
+		definition,
+		fp,
+		state,
+	)
+	return file, errors.Join(readErr, fp.Close(), state.diagnosticError())
+}
+
+func prepareFile(language *LanguageDefinition, opts *FileOptions) (*LanguageDefinition, *runState, error) {
+	definition, err := snapshotDefinition(language)
+	if err != nil {
+		return nil, nil, err
+	}
+	if opts == nil {
+		opts = &FileOptions{}
+	}
+	state := newRunState(&runConfig{Debug: opts.Debug}, opts.Diagnostics, opts.OnLine)
+	return definition, state, nil
 }
 
 type hashingReader struct {
@@ -92,7 +100,7 @@ type hashingReader struct {
 func detectAndAnalyzeFile(
 	candidate fileCandidate,
 	languages *DefinedLanguages,
-	opts *ClocOptions,
+	opts *runState,
 	reader *lineReader,
 ) (result fileAnalysisResult) {
 	result = fileAnalysisResult{fileCandidate: candidate, ignored: true}
@@ -107,7 +115,7 @@ func detectAndAnalyzeFile(
 
 	var source io.Reader = file
 	var hashed *hashingReader
-	if !opts.SkipDuplicated {
+	if opts.Dedup {
 		hashed = &hashingReader{reader: file, hash: md5.New()}
 		source = hashed
 	}
@@ -135,11 +143,8 @@ func detectAndAnalyzeFile(
 		return result
 	}
 	exts := opts.exts
-	if !opts.extsSet {
-		exts = Exts
-	}
 	languageKey, ok := exts[ext]
-	if !ok {
+	if !ok || languages.Langs[languageKey] == nil {
 		return result
 	}
 	if !includeLanguage(languageKey, opts) {
@@ -175,320 +180,98 @@ func (r *hashingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// AnalyzeReader counts lines and reports read failures through opts.Diagnostics.
-// Partial counts are returned for compatibility; Processor excludes failed files.
-func AnalyzeReader(filename string, language *Language, file io.Reader, opts *ClocOptions) *ClocFile {
-	opts = opts.withDiagnostics()
-	result, err := analyzeReader(filename, language, file, opts)
-	opts.warn(err)
-	return result
+// AnalyzeReader synchronously analyzes a reader. It leaves the reader open and
+// returns partial counts together with read/diagnostic errors.
+func AnalyzeReader(filename string, language *LanguageDefinition, source io.Reader, opts *FileOptions) (*ClocFile, error) {
+	definition, state, err := prepareFile(language, opts)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil {
+		return nil, &OptionError{Field: "Reader", Err: fmt.Errorf("reader is required")}
+	}
+	result, err := analyzeReader(
+		filename,
+		definition,
+		source,
+		state,
+	)
+	return result, errors.Join(err, state.diagnosticError())
 }
 
-func analyzeReader(filename string, language *Language, file io.Reader, opts *ClocOptions) (*ClocFile, error) {
+func analyzeReader(filename string, language *LanguageDefinition, source io.Reader, state *runState) (*ClocFile, error) {
 	return analyzeLines(
 		filename,
 		language,
-		newLineReader(file),
-		opts,
+		newLineReader(source),
+		state,
 	)
 }
 
-func analyzeLines(filename string, language *Language, reader *lineReader, opts *ClocOptions) (*ClocFile, error) {
-	if opts.Debug {
-		opts.diagnosticf("[FILE] file=%q\n", filename)
+func analyzeLines(filename string, language *LanguageDefinition, reader *lineReader, state *runState) (*ClocFile, error) {
+	if state.Debug {
+		state.diagnosticf("[FILE] file=%q\n", filename)
 	}
-
-	clocFile := &ClocFile{
-		Name: filename,
-		Lang: language.Name,
+	file := &ClocFile{Name: filename, Lang: language.Name}
+	// Bind a concrete method once per file. Keeping the scanner here avoids
+	// allocating its state on the heap through a factory-returned interface.
+	var syntax syntaxScanner
+	var legacy legacyScanner
+	var classify lineClassifier
+	if language.syntax != nil {
+		syntax = syntaxScanner{scanner: lexer.NewScanner(language.syntax), first: true}
+		classify = syntax.classify
+	} else {
+		legacy = legacyScanner{language: language, first: true, codeFlags: make([]bool, len(language.multiLines))}
+		classify = legacy.classify
 	}
-
-	isFirstLine := true
-	rules := syntaxForLanguage(language)
-	useSyntax := rules != nil
-	var scanner lexer.Scanner
-	if useSyntax {
-		scanner = lexer.NewScanner(rules)
-	}
-	inComments := [][2]string{}
-	// Reuse flags for every multiline-comment row instead of allocating per row.
-	codeFlags := make([]bool, len(language.multiLines))
-
-scannerloop:
 	for {
-		lineOrg, err := reader.next()
+		raw, err := reader.next()
 		if err != nil && !errors.Is(err, io.EOF) {
-			return clocFile, fmt.Errorf("read %q: %w", filename, err)
+			return file, fmt.Errorf("read %q: %w", filename, err)
 		}
-
-		// prevent infinite loop
-		if len(lineOrg) == 0 && err == io.EOF {
+		if len(raw) == 0 && errors.Is(err, io.EOF) {
 			break
 		}
-
-		line := bytes.TrimSpace(lineOrg)
-		if useSyntax {
-			input := lineOrg
-			if isFirstLine {
-				input = bytes.TrimPrefix(input, []byte("\xef\xbb\xbf"))
-				line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
-			}
-			isShebang := isFirstLine && bytes.HasPrefix(line, []byte("#!"))
-			isFirstLine = false
-			if isShebang {
-				onCode(
-					clocFile,
-					opts,
-					scanner.InComment(),
-					line,
-					lineOrg,
-				)
-				continue
-			}
-			isCode := scanner.ScanLine(input, line)
-			switch {
-			case len(line) == 0:
-				onBlank(
-					clocFile,
-					opts,
-					scanner.InComment(),
-					line,
-					lineOrg,
-				)
-			case isCode:
-				onCode(
-					clocFile,
-					opts,
-					scanner.InComment(),
-					line,
-					lineOrg,
-				)
-			default:
-				onComment(
-					clocFile,
-					opts,
-					scanner.InComment(),
-					line,
-					lineOrg,
-				)
-			}
-			continue
-		}
-
-		if len(line) == 0 {
-			onBlank(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-			continue
-		}
-
-		// shebang line is 'code'
-		if isFirstLine && bytes.HasPrefix(line, []byte("#!")) {
-			onCode(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-			isFirstLine = false
-			continue
-		}
-
-		if len(inComments) == 0 {
-			if isFirstLine {
-				line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
-			}
-
-			if len(language.regexLineComments) > 0 {
-			singleloopRegex:
-				for _, singleCommentRegex := range language.regexLineComments {
-					if singleCommentRegex.Match(line) {
-						// check if single comment is a prefix of multi comment
-						for _, ml := range language.multiLines {
-							if ml[0] != "" && bytes.HasPrefix(line, []byte(ml[0])) {
-								break singleloopRegex
-							}
-						}
-						onComment(
-							clocFile,
-							opts,
-							len(inComments) > 0,
-							line,
-							lineOrg,
-						)
-						continue scannerloop
-					}
-				}
-			} else {
-			singleloop:
-				for _, singleComment := range language.lineComments {
-					if bytes.HasPrefix(line, []byte(singleComment)) {
-						// check if single comment is a prefix of multi comment
-						for _, ml := range language.multiLines {
-							if ml[0] != "" && bytes.HasPrefix(line, []byte(ml[0])) {
-								break singleloop
-							}
-						}
-						onComment(
-							clocFile,
-							opts,
-							len(inComments) > 0,
-							line,
-							lineOrg,
-						)
-						continue scannerloop
-					}
-				}
-			}
-
-			if len(language.multiLines) == 0 {
-				onCode(
-					clocFile,
-					opts,
-					len(inComments) > 0,
-					line,
-					lineOrg,
-				)
-				continue scannerloop
-			}
-		}
-
-		if len(inComments) == 0 && !containsCommentBytes(line, language.multiLines) {
-			onCode(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-			continue scannerloop
-		}
-
-		lenLine := len(line)
-		singleDelimiter := len(language.multiLines) == 1 && len(language.multiLines[0]) == 2
-		if singleDelimiter && language.multiLines[0][0] == "" {
-			onCode(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-			continue
-		}
-		clear(codeFlags)
-		for pos := 0; pos < lenLine; {
-			for idx, ml := range language.multiLines {
-				begin, end := ml[0], ml[1]
-				lenBegin := len(begin)
-
-				hasBegin := pos+lenBegin <= lenLine && bytes.HasPrefix(line[pos:], []byte(begin))
-				if hasBegin && (begin != end || len(inComments) == 0) {
-					pos += lenBegin
-					inComments = append(inComments, [2]string{begin, end})
-					continue
-				}
-
-				if n := len(inComments); n > 0 {
-					last := inComments[n-1]
-					if pos+len(last[1]) <= lenLine && bytes.HasPrefix(line[pos:], []byte(last[1])) {
-						inComments = inComments[:n-1]
-						pos += len(last[1])
-					}
-				} else if pos < lenLine {
-					r, _ := utf8.DecodeRune(line[pos:])
-					if !unicode.IsSpace(r) {
-						codeFlags[idx] = true
-					}
-				}
-			}
-			pos++
-		}
-
-		isCode := true
-		for _, b := range codeFlags {
-			if !b {
-				isCode = false
-			}
-		}
-
-		if isCode {
-			onCode(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-		} else {
-			onComment(
-				clocFile,
-				opts,
-				len(inComments) > 0,
-				line,
-				lineOrg,
-			)
-		}
-
-		if err == io.EOF {
-			break
-		}
-	}
-
-	return clocFile, nil
-}
-
-// Materialize strings only for observers. Callback strings must outlive the
-// borrowed line buffer, which the next read (or next file) may overwrite.
-func onBlank(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg []byte) {
-	clocFile.Blanks++
-	if opts.OnBlank != nil {
-		opts.OnBlank(string(line))
-	}
-
-	if opts.Debug {
-		opts.debugLine(
-			"BLNK",
-			clocFile,
-			isInComments,
-			lineOrg,
+		classified := classify(raw)
+		recordLine(
+			file,
+			state,
+			classified,
+			raw,
 		)
 	}
+	return file, nil
 }
 
-func onComment(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg []byte) {
-	clocFile.Comments++
-	if opts.OnComment != nil {
-		opts.OnComment(string(line))
+func recordLine(file *ClocFile, state *runState, line classifiedLine, raw []byte) {
+	var debugKind string
+	switch line.kind {
+	case CodeLine:
+		file.Code++
+		debugKind = "CODE"
+	case CommentLine:
+		file.Comments++
+		debugKind = "COMM"
+	case BlankLine:
+		file.Blanks++
+		debugKind = "BLNK"
 	}
-
-	if opts.Debug {
-		opts.debugLine(
-			"COMM",
-			clocFile,
-			isInComments,
-			lineOrg,
+	if state.onLine != nil {
+		state.onLine(
+			LineEvent{
+				Number: int64(file.Code) + int64(file.Comments) + int64(file.Blanks),
+				Kind:   line.kind,
+				Text:   string(line.text),
+			},
 		)
 	}
-}
-
-func onCode(clocFile *ClocFile, opts *ClocOptions, isInComments bool, line, lineOrg []byte) {
-	clocFile.Code++
-	if opts.OnCode != nil {
-		opts.OnCode(string(line))
-	}
-
-	if opts.Debug {
-		opts.debugLine(
-			"CODE",
-			clocFile,
-			isInComments,
-			lineOrg,
+	if state.Debug {
+		state.debugLine(
+			debugKind,
+			file,
+			line.inComment,
+			raw,
 		)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/longafterx/gocloc/internal/lexertest"
@@ -121,20 +120,13 @@ func TestBenchmarkLanguages(t *testing.T) {
 			for _, workers := range []int{1, 8} {
 				for _, dedup := range []bool{false, true} {
 					t.Run(fmt.Sprintf("workers=%d/dedup=%t", workers, dedup), func(t *testing.T) {
-						var code, comments, blanks atomic.Int32
 						result, err := Analyze([]string{fixture.root}, &Options{
 							Workers: workers, Dedup: dedup,
-							OnCode: func(string) { code.Add(1) }, OnComment: func(string) { comments.Add(1) },
-							OnBlank: func(string) { blanks.Add(1) },
 						})
 						if err != nil {
 							t.Fatal(err)
 						}
 						fixture.verify(t, result, dedup)
-						if code.Load() != result.Total.Code || comments.Load() != result.Total.Comments ||
-							blanks.Load() != result.Total.Blanks {
-							t.Fatalf("callbacks = %d/%d/%d, result = %+v", code.Load(), comments.Load(), blanks.Load(), result.Total)
-						}
 					})
 				}
 			}

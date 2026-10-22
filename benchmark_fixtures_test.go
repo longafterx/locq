@@ -79,10 +79,10 @@ func writeBenchmarkFixture(tb testing.TB, spec benchmarkFixtureSpec) benchmarkFi
 	return fixture
 }
 
-func (fixture benchmarkFixture) verify(tb testing.TB, result *Result, skipDuplicated bool) {
+func (fixture benchmarkFixture) verify(tb testing.TB, result *Result, dedup bool) {
 	tb.Helper()
 	files := fixture.spec.unique
-	if skipDuplicated {
+	if !dedup {
 		files = fixture.spec.files
 	}
 	wantCode := int32(files) * fixture.spec.code
@@ -123,12 +123,12 @@ func TestBenchmarkFixtures(t *testing.T) {
 			for _, workers := range []int{1, 8} {
 				for _, dedup := range []bool{true, false} {
 					t.Run(fmt.Sprintf("workers=%d/dedup=%t", workers, dedup), func(t *testing.T) {
-						processor := NewProcessor(NewDefinedLanguages(), newBenchmarkOptions(workers, !dedup))
-						result, err := processor.Analyze([]string{fixture.root})
+						opts := newBenchmarkOptions(workers, dedup)
+						result, err := Analyze([]string{fixture.root}, opts)
 						if err != nil {
 							t.Fatal(err)
 						}
-						fixture.verify(t, result, !dedup)
+						fixture.verify(t, result, dedup)
 					})
 				}
 			}
@@ -137,7 +137,7 @@ func TestBenchmarkFixtures(t *testing.T) {
 }
 
 // BenchmarkProcessorFixtures needs no external checkout or network. Each leaf
-// measures a complete Processor.Analyze call on a warmed, deterministic corpus.
+// measures a complete Analyze call on a warmed, deterministic corpus.
 func BenchmarkProcessorFixtures(b *testing.B) {
 	for _, spec := range benchmarkFixtureSpecs() {
 		b.Run(benchmarkFixtureVersion+"/"+spec.name, func(b *testing.B) {
@@ -147,7 +147,7 @@ func BenchmarkProcessorFixtures(b *testing.B) {
 			for _, workers := range []int{1, 2, 4, 8} {
 				for _, dedup := range []bool{true, false} {
 					b.Run(fmt.Sprintf("workers=%d/dedup=%t", workers, dedup), func(b *testing.B) {
-						benchmarkFixtureAnalyze(b, fixture, workers, !dedup)
+						benchmarkFixtureAnalyze(b, fixture, workers, dedup)
 					})
 				}
 			}
@@ -155,26 +155,26 @@ func BenchmarkProcessorFixtures(b *testing.B) {
 	}
 }
 
-func benchmarkFixtureAnalyze(b *testing.B, fixture benchmarkFixture, workers int, skipDuplicated bool) {
+func benchmarkFixtureAnalyze(b *testing.B, fixture benchmarkFixture, workers int, dedup bool) {
 	b.StopTimer()
 	paths := []string{fixture.root}
-	processor := NewProcessor(NewDefinedLanguages(), newBenchmarkOptions(workers, skipDuplicated))
-	result, err := processor.Analyze(paths)
+	opts := newBenchmarkOptions(workers, dedup)
+	result, err := Analyze(paths, opts)
 	if err != nil {
 		b.Fatal(err)
 	}
-	fixture.verify(b, result, skipDuplicated)
+	fixture.verify(b, result, dedup)
 	b.ReportAllocs()
 	b.SetBytes(fixture.bytes)
 	b.ResetTimer()
 	b.StartTimer()
 	for range b.N {
-		processor := NewProcessor(NewDefinedLanguages(), newBenchmarkOptions(workers, skipDuplicated))
-		result, err = processor.Analyze(paths)
+		opts := newBenchmarkOptions(workers, dedup)
+		result, err = Analyze(paths, opts)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.StopTimer()
-	fixture.verify(b, result, skipDuplicated)
+	fixture.verify(b, result, dedup)
 }

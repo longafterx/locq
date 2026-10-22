@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestProcessorDebugLogsAnalysisBeforeDuplicateExclusion(t *testing.T) {
+func TestAnalyzeDebugLogsAnalysisBeforeDuplicateExclusion(t *testing.T) {
 	dir := t.TempDir()
 	paths := []string{}
 	for i := range 24 {
@@ -26,8 +26,8 @@ func TestProcessorDebugLogsAnalysisBeforeDuplicateExclusion(t *testing.T) {
 			t.Run(fmt.Sprintf("workers=%d/skip=%t", workers, skip), func(t *testing.T) {
 				t.Parallel()
 				var diagnostics bytes.Buffer
-				opts := &ClocOptions{
-					Workers: workers, Debug: true, SkipDuplicated: skip, Diagnostics: &diagnostics,
+				opts := &Options{
+					Workers: workers, Debug: true, Dedup: !skip, Diagnostics: &diagnostics,
 				}
 				result := analyzeDirectory(t, dir, opts)
 				wantFiles := paths[:1]
@@ -78,7 +78,7 @@ func TestProcessorDebugLogsAnalysisBeforeDuplicateExclusion(t *testing.T) {
 	}
 }
 
-func TestProcessorReportsFileFailuresAndContinues(t *testing.T) {
+func TestAnalyzeReportsFileFailuresAndContinues(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "good.go"), []byte("package good\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestProcessorReportsFileFailuresAndContinues(t *testing.T) {
 		for _, skip := range []bool{false, true} {
 			t.Run(fmt.Sprintf("workers=%d/skip=%t", workers, skip), func(t *testing.T) {
 				var diagnostics bytes.Buffer
-				opts := &ClocOptions{Workers: workers, SkipDuplicated: skip, Diagnostics: &diagnostics}
+				opts := &Options{Workers: workers, Dedup: !skip, Diagnostics: &diagnostics}
 				result := analyzeDirectory(t, dir, opts)
 				if result.Total.Total != 1 || result.Total.Code != 1 || len(result.Files) != 1 {
 					t.Fatalf("failed files were counted: %+v", result.Total)
@@ -137,10 +137,10 @@ func TestPipelineDeduplicationPreservesFirstFile(t *testing.T) {
 		}
 	}
 
-	opts := NewClocOptions()
+	opts := &Options{}
 	opts.Workers = 4
-	opts.SkipDuplicated = false
-	files, clocFiles, err := scanAndAnalyzeFiles([]string{dir}, NewDefinedLanguages(), opts)
+	opts.Dedup = true
+	files, clocFiles, err := scanAndAnalyzeFiles([]string{dir}, NewDefinedLanguages(), testRunState(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +167,8 @@ func TestParallelDetectionPreservesOrderAcrossIgnoredFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	serial := analyzeDirectory(t, dir, &ClocOptions{Workers: 1})
-	parallel := analyzeDirectory(t, dir, &ClocOptions{Workers: 4})
+	serial := analyzeDirectory(t, dir, &Options{Workers: 1, Dedup: true})
+	parallel := analyzeDirectory(t, dir, &Options{Workers: 4, Dedup: true})
 	if !reflect.DeepEqual(serial.Files, parallel.Files) || !reflect.DeepEqual(serial.Total, parallel.Total) {
 		t.Fatalf("serial and parallel results differ: %v / %v", serial.Files, parallel.Files)
 	}
@@ -185,10 +185,10 @@ func TestPipelineContinuesAfterWalkError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := NewClocOptions()
+	opts := &Options{}
 	opts.Workers = 4
-	opts.SkipDuplicated = false
-	files, _, err := scanAndAnalyzeFiles([]string{filepath.Join(dir, "missing"), dir}, NewDefinedLanguages(), opts)
+	opts.Dedup = true
+	files, _, err := scanAndAnalyzeFiles([]string{filepath.Join(dir, "missing"), dir}, NewDefinedLanguages(), testRunState(t, opts))
 	if err != nil {
 		t.Fatalf("scanAndAnalyzeFiles() error = %v, want nil", err)
 	}
@@ -207,10 +207,10 @@ func TestPipelineSkipDuplicatedKeepsAllFiles(t *testing.T) {
 		}
 	}
 
-	opts := NewClocOptions()
+	opts := &Options{}
 	opts.Workers = 4
-	opts.SkipDuplicated = true
-	files, _, err := scanAndAnalyzeFiles([]string{dir}, NewDefinedLanguages(), opts)
+	opts.Dedup = false
+	files, _, err := scanAndAnalyzeFiles([]string{dir}, NewDefinedLanguages(), testRunState(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

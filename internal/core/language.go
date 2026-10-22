@@ -22,18 +22,25 @@ type ClocLanguage struct {
 	Blanks     int32  `xml:"blank,attr" json:"blank"`
 }
 
-// Language is a type used to definitions and store statistics for one programming language.
+// Language contains accumulated statistics, independently of parser definitions.
 type Language struct {
+	Name     string
+	Files    []string
+	Code     int32
+	Comments int32
+	Blanks   int32
+	Total    int32
+}
+
+// LanguageDefinition describes immutable parsing rules. Constructors select the
+// engine explicitly; a custom definition always uses literal legacy markers.
+// Name is the name reported in results. Do not mutate definitions during a call.
+type LanguageDefinition struct {
 	Name              string
 	syntax            *lexer.Rules
 	lineComments      []string
 	regexLineComments []*regexp.Regexp
 	multiLines        [][]string
-	Files             []string
-	Code              int32
-	Comments          int32
-	Blanks            int32
-	Total             int32
 }
 
 // Languages is an array representation of Language.
@@ -86,8 +93,8 @@ func (ls Languages) SortByCode() {
 var reShebangEnv = regexp.MustCompile(`^#! *(\S+/env) ([a-zA-Z]+)`)
 var reShebangLang = regexp.MustCompile(`^#! *[.a-zA-Z/]+/([a-zA-Z]+)`)
 
-// Exts is the definition of the language name, keyed by the extension for each language.
-var Exts = map[string]string{
+// builtInExtensions maps detection keys to language names. Never modified.
+var builtInExtensions = map[string]string{
 	"as":          "ActionScript",
 	"ada":         "Ada",
 	"adb":         "Ada",
@@ -376,7 +383,7 @@ func getShebang(line string) (shebangLang string, ok bool) {
 
 // detectFileType preserves filename and shebang precedence while allowing callers
 // to reuse the bytes consumed for language detection.
-func detectFileType(path string, opts *ClocOptions, readContent func(bool) ([]byte, error)) (ext string, ok bool) {
+func detectFileType(path string, opts *runState, readContent func(bool) ([]byte, error)) (ext string, ok bool) {
 	ext = filepath.Ext(path)
 	base := filepath.Base(path)
 
@@ -453,22 +460,23 @@ func detectFileType(path string, opts *ClocOptions, readContent func(bool) ([]by
 	return ext, ok
 }
 
-// NewLanguage create language data store.
-func NewLanguage(name string, lineComments []string, multiLines [][]string) *Language {
-	return &Language{
-		Name:         name,
-		lineComments: lineComments,
-		multiLines:   multiLines,
-		Files:        []string{},
+// NewLanguageDefinition creates explicit legacy rules, independent of the name.
+// Markers are literal; block comments must have nonempty opening/closing markers.
+// Empty marker pairs are accepted as the historical no-block-comments sentinel.
+// Inputs are copied. Invalid block pairs are reported by analysis entry points.
+func NewLanguageDefinition(name string, lineComments []string, multiLines [][]string) *LanguageDefinition {
+	definition := &LanguageDefinition{Name: name, lineComments: append([]string(nil), lineComments...)}
+	for _, pair := range multiLines {
+		definition.multiLines = append(definition.multiLines, append([]string(nil), pair...))
 	}
+	return definition
 }
 
-func (l *Language) WithRegexLineComments(regexLineComments []string) *Language {
-	var regexLineCommentsCompiled []*regexp.Regexp
-	for _, r := range regexLineComments {
-		regexLineCommentsCompiled = append(regexLineCommentsCompiled, regexp.MustCompile(r))
+func (l *LanguageDefinition) withRegexLineComments(patterns []string) *LanguageDefinition {
+	for _, pattern := range patterns {
+		l.regexLineComments = append(l.regexLineComments, regexp.MustCompile(pattern))
 	}
-	l.regexLineComments = regexLineCommentsCompiled
+	l.syntax = nil
 	return l
 }
 
@@ -496,27 +504,15 @@ func lang2exts(lang string, extensions map[string]string) (exts string) {
 	return strings.Join(es, ", ")
 }
 
-// DefinedLanguages is the type information for mapping language name(key) and NewLanguage.
+// DefinedLanguages contains built-in parser definitions keyed by language name.
 type DefinedLanguages struct {
-	Langs           map[string]*Language
-	extensionSource *map[string]string
-}
-
-// NewDefinedLanguagesWithExtensionSource keeps public extension listings tied
-// to the facade's mutable extension mapping.
-func NewDefinedLanguagesWithExtensionSource(source *map[string]string) *DefinedLanguages {
-	languages := NewDefinedLanguages()
-	languages.extensionSource = source
-	return languages
+	Langs map[string]*LanguageDefinition
 }
 
 // GetFormattedString return DefinedLanguages as a human-readable string.
 func (langs *DefinedLanguages) GetFormattedString() string {
 	var buf bytes.Buffer
-	extensions := Exts
-	if langs.extensionSource != nil {
-		extensions = *langs.extensionSource
-	}
+	extensions := builtInExtensions
 	var printLangs []string
 	for _, lang := range langs.Langs {
 		printLangs = append(printLangs, lang.Name)
@@ -528,198 +524,206 @@ func (langs *DefinedLanguages) GetFormattedString() string {
 	return buf.String()
 }
 
-// NewDefinedLanguages create DefinedLanguages.
+// Built-in marker slices are fresh literals owned by this catalog, so copying
+// them again through the public custom-definition constructor adds no isolation.
+func newBuiltInDefinition(name string, lines []string, blocks [][]string) *LanguageDefinition {
+	return &LanguageDefinition{Name: name, lineComments: lines, multiLines: blocks}
+}
+
+// NewDefinedLanguages creates an independent built-in catalog.
+// Keep the literal catalog entries compact so their marker sets can be scanned
+// together; longer rows deliberately retain the established table layout.
 func NewDefinedLanguages() *DefinedLanguages {
 	definitions := &DefinedLanguages{
-		Langs: map[string]*Language{
-			"ActionScript":        NewLanguage("ActionScript", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Ada":                 NewLanguage("Ada", []string{"--"}, [][]string{{"", ""}}),
-			"Alda":                NewLanguage("Alda", []string{"#"}, [][]string{{"", ""}}),
-			"Ant":                 NewLanguage("Ant", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"ANTLR":               NewLanguage("ANTLR", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"AsciiDoc":            NewLanguage("AsciiDoc", []string{}, [][]string{{"", ""}}),
-			"Assembly":            NewLanguage("Assembly", []string{"//", ";", "#", "@", "|", "!"}, [][]string{{"/*", "*/"}}),
-			"ATS":                 NewLanguage("ATS", []string{"//"}, [][]string{{"/*", "*/"}, {"(*", "*)"}}),
-			"AutoHotkey":          NewLanguage("AutoHotkey", []string{";"}, [][]string{{"", ""}}),
-			"Awk":                 NewLanguage("Awk", []string{"#"}, [][]string{{"", ""}}),
-			"Arduino Sketch":      NewLanguage("Arduino Sketch", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Ballerina":           NewLanguage("Ballerina", []string{"//"}, [][]string{{"", ""}}),
-			"Batch":               NewLanguage("Batch", []string{"REM", "rem"}, [][]string{{"", ""}}),
-			"Berry":               NewLanguage("Berry", []string{"#"}, [][]string{{"#-", "-#"}}),
-			"BASH":                NewLanguage("BASH", []string{"#"}, [][]string{{"", ""}}),
-			"Bicep":               NewLanguage("Bicep", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"BitBake":             NewLanguage("BitBake", []string{"#"}, [][]string{{"", ""}}),
-			"C":                   NewLanguage("C", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"C Header":            NewLanguage("C Header", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"C Shell":             NewLanguage("C Shell", []string{"#"}, [][]string{{"", ""}}),
-			"Cairo":               NewLanguage("Cairo", []string{"//"}, [][]string{{"", ""}}),
-			"Carbon":              NewLanguage("Carbon", []string{"//"}, [][]string{{"", ""}}),
-			"Cap'n Proto":         NewLanguage("Cap'n Proto", []string{"#"}, [][]string{{"", ""}}),
-			"Carp":                NewLanguage("Carp", []string{";"}, [][]string{{"", ""}}),
-			"C#":                  NewLanguage("C#", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Chapel":              NewLanguage("Chapel", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Circom":              NewLanguage("Circom", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Clojure":             NewLanguage("Clojure", []string{"#", "#_"}, [][]string{{"", ""}}),
-			"COBOL":               NewLanguage("COBOL", []string{"*", "/"}, [][]string{{"", ""}}),
-			"CoffeeScript":        NewLanguage("CoffeeScript", []string{"#"}, [][]string{{"###", "###"}}),
-			"Coq":                 NewLanguage("Coq", []string{"(*"}, [][]string{{"(*", "*)"}}),
-			"ColdFusion":          NewLanguage("ColdFusion", []string{}, [][]string{{"<!---", "--->"}}),
-			"ColdFusion CFScript": NewLanguage("ColdFusion CFScript", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"CMake":               NewLanguage("CMake", []string{"#"}, [][]string{{"", ""}}),
-			"C++":                 NewLanguage("C++", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"C++ Header":          NewLanguage("C++ Header", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Crystal":             NewLanguage("Crystal", []string{"#"}, [][]string{{"", ""}}),
-			"CSS":                 NewLanguage("CSS", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Cython":              NewLanguage("Cython", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
-			"CUDA":                NewLanguage("CUDA", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"D":                   NewLanguage("D", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Dart":                NewLanguage("Dart", []string{"//", "///"}, [][]string{{"/*", "*/"}}),
-			"Dhall":               NewLanguage("Dhall", []string{"--"}, [][]string{{"{-", "-}"}}),
-			"DTrace":              NewLanguage("DTrace", []string{}, [][]string{{"/*", "*/"}}),
-			"Device Tree":         NewLanguage("Device Tree", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Dockerfile":          NewLanguage("Dockerfile", []string{"#"}, [][]string{{"", ""}}),
-			"Dune":                NewLanguage("Dune", []string{";"}, [][]string{{"", ""}}),
-			"Eiffel":              NewLanguage("Eiffel", []string{"--"}, [][]string{{"", ""}}),
-			"Elm":                 NewLanguage("Elm", []string{"--"}, [][]string{{"{-", "-}"}}),
-			"Elixir":              NewLanguage("Elixir", []string{"#"}, [][]string{{"", ""}}),
-			"Erlang":              NewLanguage("Erlang", []string{"%"}, [][]string{{"", ""}}),
-			"Expect":              NewLanguage("Expect", []string{"#"}, [][]string{{"", ""}}),
-			"Fish":                NewLanguage("Fish", []string{"#"}, [][]string{{"", ""}}),
-			"Frege":               NewLanguage("Frege", []string{"--"}, [][]string{{"{-", "-}"}}),
-			"F*":                  NewLanguage("F*", []string{"(*", "//"}, [][]string{{"(*", "*)"}}),
-			"F#":                  NewLanguage("F#", []string{"(*"}, [][]string{{"(*", "*)"}}),
-			"Lean":                NewLanguage("Lean", []string{"--"}, [][]string{{"/-", "-/"}}),
-			"Logtalk":             NewLanguage("Logtalk", []string{"%"}, [][]string{{"", ""}}),
-			"Lua":                 NewLanguage("Lua", []string{"--"}, [][]string{{"--[[", "]]"}}),
-			"Lilypond":            NewLanguage("Lilypond", []string{"%"}, [][]string{{"", ""}}),
-			"LISP":                NewLanguage("LISP", []string{";;"}, [][]string{{"#|", "|#"}}),
-			"LiveScript":          NewLanguage("LiveScript", []string{"#"}, [][]string{{"/*", "*/"}}),
-			"Factor":              NewLanguage("Factor", []string{"! "}, [][]string{{"", ""}}),
-			"FORTRAN Legacy":      NewLanguage("FORTRAN Legacy", []string{"c", "C", "!", "*"}, [][]string{{"", ""}}),
-			"FORTRAN Modern":      NewLanguage("FORTRAN Modern", []string{"!"}, [][]string{{"", ""}}),
-			"Gherkin":             NewLanguage("Gherkin", []string{"#"}, [][]string{{"", ""}}),
-			"Gleam":               NewLanguage("Gleam", []string{"//"}, [][]string{{"", ""}}),
-			"GLSL":                NewLanguage("GLSL", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Go":                  NewLanguage("Go", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Groovy":              NewLanguage("Groovy", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Handlebars":          NewLanguage("Handlebars", []string{}, [][]string{{"<!--", "-->"}, {"{{!", "}}"}}),
-			"Haskell":             NewLanguage("Haskell", []string{"--"}, [][]string{{"{-", "-}"}}),
-			"Haxe":                NewLanguage("Haxe", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Hurl":                NewLanguage("Hurl", []string{"#"}, [][]string{{"", ""}}),
-			"Hare":                NewLanguage("Hare", []string{"//"}, [][]string{{"", ""}}),
-			"HLSL":                NewLanguage("HLSL", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"HTML":                NewLanguage("HTML", []string{"//", "<!--"}, [][]string{{"<!--", "-->"}}),
-			"Hy":                  NewLanguage("Hy", []string{";"}, [][]string{{"", ""}}),
-			"Idris":               NewLanguage("Idris", []string{"--"}, [][]string{{"{-", "-}"}}),
-			"Imba":                NewLanguage("Imba", []string{"#"}, [][]string{{"###", "###"}}),
-			"Io":                  NewLanguage("Io", []string{"//", "#"}, [][]string{{"/*", "*/"}}),
-			"SKILL":               NewLanguage("SKILL", []string{";"}, [][]string{{"/*", "*/"}}),
-			"JAI":                 NewLanguage("JAI", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Janet":               NewLanguage("Janet", []string{"#"}, [][]string{{"", ""}}),
-			"Java":                NewLanguage("Java", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"JSP":                 NewLanguage("JSP", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"JavaScript":          NewLanguage("JavaScript", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Julia":               NewLanguage("Julia", []string{"#"}, [][]string{{"#:=", ":=#"}}),
-			"Jupyter Notebook":    NewLanguage("Jupyter Notebook", []string{"#"}, [][]string{{"", ""}}),
-			"Just":                NewLanguage("Just", []string{"#"}, [][]string{{"", ""}}).WithRegexLineComments([]string{`^#[^!].*`}),
-			"JSON":                NewLanguage("JSON", []string{}, [][]string{{"", ""}}),
-			"JSX":                 NewLanguage("JSX", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"KakouneScript":       NewLanguage("KakouneScript", []string{"#"}, [][]string{{"", ""}}),
-			"Koka":                NewLanguage("Koka", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Kotlin":              NewLanguage("Kotlin", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"LD Script":           NewLanguage("LD Script", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"LESS":                NewLanguage("LESS", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Objective-C":         NewLanguage("Objective-C", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Markdown":            NewLanguage("Markdown", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Motoko":              NewLanguage("Motoko", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Nearley":             NewLanguage("Nearley", []string{"#"}, [][]string{{"", ""}}),
-			"Nix":                 NewLanguage("Nix", []string{"#"}, [][]string{{"/*", "*/"}}),
-			"NSIS":                NewLanguage("NSIS", []string{"#", ";"}, [][]string{{"/*", "*/"}}),
-			"Nu":                  NewLanguage("Nu", []string{";", "#"}, [][]string{{"", ""}}),
-			"OCaml":               NewLanguage("OCaml", []string{}, [][]string{{"(*", "*)"}}),
-			"Objective-C++":       NewLanguage("Objective-C++", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Makefile":            NewLanguage("Makefile", []string{"#"}, [][]string{{"", ""}}),
-			"MATLAB":              NewLanguage("MATLAB", []string{"%"}, [][]string{{"%{", "}%"}}),
-			"Mercury":             NewLanguage("Mercury", []string{"%"}, [][]string{{"/*", "*/"}}),
-			"Maven":               NewLanguage("Maven", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Meson":               NewLanguage("Meson", []string{"#"}, [][]string{{"", ""}}),
-			"Mojo":                NewLanguage("Mojo", []string{"#"}, [][]string{{"", ""}}),
-			"Move":                NewLanguage("Move", []string{"//"}, [][]string{{"", ""}}),
-			"Mustache":            NewLanguage("Mustache", []string{}, [][]string{{"{{!", "}}"}}),
-			"M4":                  NewLanguage("M4", []string{"#"}, [][]string{{"", ""}}),
-			"Nim":                 NewLanguage("Nim", []string{"#"}, [][]string{{"#[", "]#"}}),
-			"Nunjucks":            NewLanguage("Nunjucks", []string{}, [][]string{{"{#", "#}"}, {"<!--", "-->"}}),
-			"lex":                 NewLanguage("lex", []string{}, [][]string{{"/*", "*/"}}),
-			"Odin":                NewLanguage("Odin", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Ohm":                 NewLanguage("Ohm", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"PHP":                 NewLanguage("PHP", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
-			"Pascal":              NewLanguage("Pascal", []string{"//"}, [][]string{{"{", ")"}}),
-			"Perl":                NewLanguage("Perl", []string{"#"}, [][]string{{":=", ":=cut"}}),
-			"Plain Text":          NewLanguage("Plain Text", []string{}, [][]string{{"", ""}}),
-			"Plan9 Shell":         NewLanguage("Plan9 Shell", []string{"#"}, [][]string{{"", ""}}),
-			"Pony":                NewLanguage("Pony", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"PowerShell":          NewLanguage("PowerShell", []string{"#"}, [][]string{{"<#", "#>"}}),
-			"Polly":               NewLanguage("Polly", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Protocol Buffers":    NewLanguage("Protocol Buffers", []string{"//"}, [][]string{{"", ""}}),
-			"PRQL":                NewLanguage("PRQL", []string{"#"}, [][]string{{"", ""}}),
-			"Python":              NewLanguage("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
-			"Q":                   NewLanguage("Q", []string{"/ "}, [][]string{{"\\", "/"}, {"/", "\\"}}),
-			"QML":                 NewLanguage("QML", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"R":                   NewLanguage("R", []string{"#"}, [][]string{{"", ""}}),
-			"Reason":              NewLanguage("Reason", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Rebol":               NewLanguage("Rebol", []string{";"}, [][]string{{"", ""}}),
-			"Red":                 NewLanguage("Red", []string{";"}, [][]string{{"", ""}}),
-			"Rego":                NewLanguage("Rego", []string{"#"}, [][]string{{"", ""}}),
-			"RMarkdown":           NewLanguage("RMarkdown", []string{}, [][]string{{"", ""}}),
-			"RAML":                NewLanguage("RAML", []string{"#"}, [][]string{{"", ""}}),
-			"Racket":              NewLanguage("Racket", []string{";"}, [][]string{{"#|", "|#"}}),
-			"ReStructuredText":    NewLanguage("ReStructuredText", []string{}, [][]string{{"", ""}}),
-			"Ring":                NewLanguage("Ring", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
-			"Ruby":                NewLanguage("Ruby", []string{"#"}, [][]string{{":=begin", ":=end"}}),
-			"Ruby HTML":           NewLanguage("Ruby HTML", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Rust":                NewLanguage("Rust", []string{"//", "///", "//!"}, [][]string{{"/*", "*/"}}),
-			"Scala":               NewLanguage("Scala", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Sass":                NewLanguage("Sass", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Scheme":              NewLanguage("Scheme", []string{";"}, [][]string{{"#|", "|#"}}),
-			"sed":                 NewLanguage("sed", []string{"#"}, [][]string{{"", ""}}),
-			"Stan":                NewLanguage("Stan", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Starlark":            NewLanguage("Starlark", []string{"#"}, [][]string{{"", ""}}),
-			"Solidity":            NewLanguage("Solidity", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Bourne Shell":        NewLanguage("Bourne Shell", []string{"#"}, [][]string{{"", ""}}),
-			"Standard ML":         NewLanguage("Standard ML", []string{}, [][]string{{"(*", "*)"}}),
-			"SQL":                 NewLanguage("SQL", []string{"--"}, [][]string{{"/*", "*/"}}),
-			"Svelte":              NewLanguage("Svelte", []string{"//"}, [][]string{{"/*", "*/"}, {"<!--", "-->"}}),
-			"Swift":               NewLanguage("Swift", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Templ":               NewLanguage("Templ", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Terra":               NewLanguage("Terra", []string{"--"}, [][]string{{"--[[", "]]"}}),
-			"TeX":                 NewLanguage("TeX", []string{"%"}, [][]string{{"", ""}}),
-			"Inno Setup":          NewLanguage("Inno Setup", []string{";"}, [][]string{{"", ""}}),
-			"Isabelle":            NewLanguage("Isabelle", []string{}, [][]string{{"(*", "*)"}}),
-			"TLA":                 NewLanguage("TLA", []string{"\\*"}, [][]string{{"(*", "*)"}}),
-			"Tcl/Tk":              NewLanguage("Tcl/Tk", []string{"#"}, [][]string{{"", ""}}),
-			"TOML":                NewLanguage("TOML", []string{"#"}, [][]string{{"", ""}}),
-			"TypeScript":          NewLanguage("TypeScript", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"HCL":                 NewLanguage("HCL", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
-			"Umka":                NewLanguage("Umka", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Unity-Prefab":        NewLanguage("Unity-Prefab", []string{}, [][]string{{"", ""}}),
-			"MSBuild script":      NewLanguage("MSBuild script", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Vala":                NewLanguage("Vala", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Verilog":             NewLanguage("Verilog", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"VimL":                NewLanguage("VimL", []string{`"`}, [][]string{{"", ""}}),
-			"Visual Basic":        NewLanguage("Visual Basic", []string{"'"}, [][]string{{"", ""}}),
-			"Vue":                 NewLanguage("Vue", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"Vyper":               NewLanguage("Vyper", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
-			"WiX":                 NewLanguage("WiX", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"XML":                 NewLanguage("XML", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"XML resource":        NewLanguage("XML resource", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"XSLT":                NewLanguage("XSLT", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"XSD":                 NewLanguage("XSD", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
-			"YAML":                NewLanguage("YAML", []string{"#"}, [][]string{{"", ""}}),
-			"Yacc":                NewLanguage("Yacc", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Yul":                 NewLanguage("Yul", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Zephir":              NewLanguage("Zephir", []string{"//"}, [][]string{{"/*", "*/"}}),
-			"Zig":                 NewLanguage("Zig", []string{"//", "///"}, [][]string{{"", ""}}),
-			"Zsh":                 NewLanguage("Zsh", []string{"#"}, [][]string{{"", ""}}),
+		Langs: map[string]*LanguageDefinition{
+			"ActionScript":        newBuiltInDefinition("ActionScript", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Ada":                 newBuiltInDefinition("Ada", []string{"--"}, [][]string{{"", ""}}),
+			"Alda":                newBuiltInDefinition("Alda", []string{"#"}, [][]string{{"", ""}}),
+			"Ant":                 newBuiltInDefinition("Ant", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"ANTLR":               newBuiltInDefinition("ANTLR", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"AsciiDoc":            newBuiltInDefinition("AsciiDoc", []string{}, [][]string{{"", ""}}),
+			"Assembly":            newBuiltInDefinition("Assembly", []string{"//", ";", "#", "@", "|", "!"}, [][]string{{"/*", "*/"}}),
+			"ATS":                 newBuiltInDefinition("ATS", []string{"//"}, [][]string{{"/*", "*/"}, {"(*", "*)"}}),
+			"AutoHotkey":          newBuiltInDefinition("AutoHotkey", []string{";"}, [][]string{{"", ""}}),
+			"Awk":                 newBuiltInDefinition("Awk", []string{"#"}, [][]string{{"", ""}}),
+			"Arduino Sketch":      newBuiltInDefinition("Arduino Sketch", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Ballerina":           newBuiltInDefinition("Ballerina", []string{"//"}, [][]string{{"", ""}}),
+			"Batch":               newBuiltInDefinition("Batch", []string{"REM", "rem"}, [][]string{{"", ""}}),
+			"Berry":               newBuiltInDefinition("Berry", []string{"#"}, [][]string{{"#-", "-#"}}),
+			"BASH":                newBuiltInDefinition("BASH", []string{"#"}, [][]string{{"", ""}}),
+			"Bicep":               newBuiltInDefinition("Bicep", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"BitBake":             newBuiltInDefinition("BitBake", []string{"#"}, [][]string{{"", ""}}),
+			"C":                   newBuiltInDefinition("C", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"C Header":            newBuiltInDefinition("C Header", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"C Shell":             newBuiltInDefinition("C Shell", []string{"#"}, [][]string{{"", ""}}),
+			"Cairo":               newBuiltInDefinition("Cairo", []string{"//"}, [][]string{{"", ""}}),
+			"Carbon":              newBuiltInDefinition("Carbon", []string{"//"}, [][]string{{"", ""}}),
+			"Cap'n Proto":         newBuiltInDefinition("Cap'n Proto", []string{"#"}, [][]string{{"", ""}}),
+			"Carp":                newBuiltInDefinition("Carp", []string{";"}, [][]string{{"", ""}}),
+			"C#":                  newBuiltInDefinition("C#", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Chapel":              newBuiltInDefinition("Chapel", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Circom":              newBuiltInDefinition("Circom", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Clojure":             newBuiltInDefinition("Clojure", []string{"#", "#_"}, [][]string{{"", ""}}),
+			"COBOL":               newBuiltInDefinition("COBOL", []string{"*", "/"}, [][]string{{"", ""}}),
+			"CoffeeScript":        newBuiltInDefinition("CoffeeScript", []string{"#"}, [][]string{{"###", "###"}}),
+			"Coq":                 newBuiltInDefinition("Coq", []string{"(*"}, [][]string{{"(*", "*)"}}),
+			"ColdFusion":          newBuiltInDefinition("ColdFusion", []string{}, [][]string{{"<!---", "--->"}}),
+			"ColdFusion CFScript": newBuiltInDefinition("ColdFusion CFScript", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"CMake":               newBuiltInDefinition("CMake", []string{"#"}, [][]string{{"", ""}}),
+			"C++":                 newBuiltInDefinition("C++", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"C++ Header":          newBuiltInDefinition("C++ Header", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Crystal":             newBuiltInDefinition("Crystal", []string{"#"}, [][]string{{"", ""}}),
+			"CSS":                 newBuiltInDefinition("CSS", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Cython":              newBuiltInDefinition("Cython", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
+			"CUDA":                newBuiltInDefinition("CUDA", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"D":                   newBuiltInDefinition("D", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Dart":                newBuiltInDefinition("Dart", []string{"//", "///"}, [][]string{{"/*", "*/"}}),
+			"Dhall":               newBuiltInDefinition("Dhall", []string{"--"}, [][]string{{"{-", "-}"}}),
+			"DTrace":              newBuiltInDefinition("DTrace", []string{}, [][]string{{"/*", "*/"}}),
+			"Device Tree":         newBuiltInDefinition("Device Tree", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Dockerfile":          newBuiltInDefinition("Dockerfile", []string{"#"}, [][]string{{"", ""}}),
+			"Dune":                newBuiltInDefinition("Dune", []string{";"}, [][]string{{"", ""}}),
+			"Eiffel":              newBuiltInDefinition("Eiffel", []string{"--"}, [][]string{{"", ""}}),
+			"Elm":                 newBuiltInDefinition("Elm", []string{"--"}, [][]string{{"{-", "-}"}}),
+			"Elixir":              newBuiltInDefinition("Elixir", []string{"#"}, [][]string{{"", ""}}),
+			"Erlang":              newBuiltInDefinition("Erlang", []string{"%"}, [][]string{{"", ""}}),
+			"Expect":              newBuiltInDefinition("Expect", []string{"#"}, [][]string{{"", ""}}),
+			"Fish":                newBuiltInDefinition("Fish", []string{"#"}, [][]string{{"", ""}}),
+			"Frege":               newBuiltInDefinition("Frege", []string{"--"}, [][]string{{"{-", "-}"}}),
+			"F*":                  newBuiltInDefinition("F*", []string{"(*", "//"}, [][]string{{"(*", "*)"}}),
+			"F#":                  newBuiltInDefinition("F#", []string{"(*"}, [][]string{{"(*", "*)"}}),
+			"Lean":                newBuiltInDefinition("Lean", []string{"--"}, [][]string{{"/-", "-/"}}),
+			"Logtalk":             newBuiltInDefinition("Logtalk", []string{"%"}, [][]string{{"", ""}}),
+			"Lua":                 newBuiltInDefinition("Lua", []string{"--"}, [][]string{{"--[[", "]]"}}),
+			"Lilypond":            newBuiltInDefinition("Lilypond", []string{"%"}, [][]string{{"", ""}}),
+			"LISP":                newBuiltInDefinition("LISP", []string{";;"}, [][]string{{"#|", "|#"}}),
+			"LiveScript":          newBuiltInDefinition("LiveScript", []string{"#"}, [][]string{{"/*", "*/"}}),
+			"Factor":              newBuiltInDefinition("Factor", []string{"! "}, [][]string{{"", ""}}),
+			"FORTRAN Legacy":      newBuiltInDefinition("FORTRAN Legacy", []string{"c", "C", "!", "*"}, [][]string{{"", ""}}),
+			"FORTRAN Modern":      newBuiltInDefinition("FORTRAN Modern", []string{"!"}, [][]string{{"", ""}}),
+			"Gherkin":             newBuiltInDefinition("Gherkin", []string{"#"}, [][]string{{"", ""}}),
+			"Gleam":               newBuiltInDefinition("Gleam", []string{"//"}, [][]string{{"", ""}}),
+			"GLSL":                newBuiltInDefinition("GLSL", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Go":                  newBuiltInDefinition("Go", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Groovy":              newBuiltInDefinition("Groovy", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Handlebars":          newBuiltInDefinition("Handlebars", []string{}, [][]string{{"<!--", "-->"}, {"{{!", "}}"}}),
+			"Haskell":             newBuiltInDefinition("Haskell", []string{"--"}, [][]string{{"{-", "-}"}}),
+			"Haxe":                newBuiltInDefinition("Haxe", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Hurl":                newBuiltInDefinition("Hurl", []string{"#"}, [][]string{{"", ""}}),
+			"Hare":                newBuiltInDefinition("Hare", []string{"//"}, [][]string{{"", ""}}),
+			"HLSL":                newBuiltInDefinition("HLSL", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"HTML":                newBuiltInDefinition("HTML", []string{"//", "<!--"}, [][]string{{"<!--", "-->"}}),
+			"Hy":                  newBuiltInDefinition("Hy", []string{";"}, [][]string{{"", ""}}),
+			"Idris":               newBuiltInDefinition("Idris", []string{"--"}, [][]string{{"{-", "-}"}}),
+			"Imba":                newBuiltInDefinition("Imba", []string{"#"}, [][]string{{"###", "###"}}),
+			"Io":                  newBuiltInDefinition("Io", []string{"//", "#"}, [][]string{{"/*", "*/"}}),
+			"SKILL":               newBuiltInDefinition("SKILL", []string{";"}, [][]string{{"/*", "*/"}}),
+			"JAI":                 newBuiltInDefinition("JAI", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Janet":               newBuiltInDefinition("Janet", []string{"#"}, [][]string{{"", ""}}),
+			"Java":                newBuiltInDefinition("Java", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"JSP":                 newBuiltInDefinition("JSP", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"JavaScript":          newBuiltInDefinition("JavaScript", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Julia":               newBuiltInDefinition("Julia", []string{"#"}, [][]string{{"#:=", ":=#"}}),
+			"Jupyter Notebook":    newBuiltInDefinition("Jupyter Notebook", []string{"#"}, [][]string{{"", ""}}),
+			"Just":                newBuiltInDefinition("Just", []string{"#"}, [][]string{{"", ""}}).withRegexLineComments([]string{`^#[^!].*`}),
+			"JSON":                newBuiltInDefinition("JSON", []string{}, [][]string{{"", ""}}),
+			"JSX":                 newBuiltInDefinition("JSX", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"KakouneScript":       newBuiltInDefinition("KakouneScript", []string{"#"}, [][]string{{"", ""}}),
+			"Koka":                newBuiltInDefinition("Koka", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Kotlin":              newBuiltInDefinition("Kotlin", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"LD Script":           newBuiltInDefinition("LD Script", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"LESS":                newBuiltInDefinition("LESS", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Objective-C":         newBuiltInDefinition("Objective-C", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Markdown":            newBuiltInDefinition("Markdown", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Motoko":              newBuiltInDefinition("Motoko", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Nearley":             newBuiltInDefinition("Nearley", []string{"#"}, [][]string{{"", ""}}),
+			"Nix":                 newBuiltInDefinition("Nix", []string{"#"}, [][]string{{"/*", "*/"}}),
+			"NSIS":                newBuiltInDefinition("NSIS", []string{"#", ";"}, [][]string{{"/*", "*/"}}),
+			"Nu":                  newBuiltInDefinition("Nu", []string{";", "#"}, [][]string{{"", ""}}),
+			"OCaml":               newBuiltInDefinition("OCaml", []string{}, [][]string{{"(*", "*)"}}),
+			"Objective-C++":       newBuiltInDefinition("Objective-C++", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Makefile":            newBuiltInDefinition("Makefile", []string{"#"}, [][]string{{"", ""}}),
+			"MATLAB":              newBuiltInDefinition("MATLAB", []string{"%"}, [][]string{{"%{", "}%"}}),
+			"Mercury":             newBuiltInDefinition("Mercury", []string{"%"}, [][]string{{"/*", "*/"}}),
+			"Maven":               newBuiltInDefinition("Maven", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Meson":               newBuiltInDefinition("Meson", []string{"#"}, [][]string{{"", ""}}),
+			"Mojo":                newBuiltInDefinition("Mojo", []string{"#"}, [][]string{{"", ""}}),
+			"Move":                newBuiltInDefinition("Move", []string{"//"}, [][]string{{"", ""}}),
+			"Mustache":            newBuiltInDefinition("Mustache", []string{}, [][]string{{"{{!", "}}"}}),
+			"M4":                  newBuiltInDefinition("M4", []string{"#"}, [][]string{{"", ""}}),
+			"Nim":                 newBuiltInDefinition("Nim", []string{"#"}, [][]string{{"#[", "]#"}}),
+			"Nunjucks":            newBuiltInDefinition("Nunjucks", []string{}, [][]string{{"{#", "#}"}, {"<!--", "-->"}}),
+			"lex":                 newBuiltInDefinition("lex", []string{}, [][]string{{"/*", "*/"}}),
+			"Odin":                newBuiltInDefinition("Odin", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Ohm":                 newBuiltInDefinition("Ohm", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"PHP":                 newBuiltInDefinition("PHP", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
+			"Pascal":              newBuiltInDefinition("Pascal", []string{"//"}, [][]string{{"{", ")"}}),
+			"Perl":                newBuiltInDefinition("Perl", []string{"#"}, [][]string{{":=", ":=cut"}}),
+			"Plain Text":          newBuiltInDefinition("Plain Text", []string{}, [][]string{{"", ""}}),
+			"Plan9 Shell":         newBuiltInDefinition("Plan9 Shell", []string{"#"}, [][]string{{"", ""}}),
+			"Pony":                newBuiltInDefinition("Pony", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"PowerShell":          newBuiltInDefinition("PowerShell", []string{"#"}, [][]string{{"<#", "#>"}}),
+			"Polly":               newBuiltInDefinition("Polly", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Protocol Buffers":    newBuiltInDefinition("Protocol Buffers", []string{"//"}, [][]string{{"", ""}}),
+			"PRQL":                newBuiltInDefinition("PRQL", []string{"#"}, [][]string{{"", ""}}),
+			"Python":              newBuiltInDefinition("Python", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
+			"Q":                   newBuiltInDefinition("Q", []string{"/ "}, [][]string{{"\\", "/"}, {"/", "\\"}}),
+			"QML":                 newBuiltInDefinition("QML", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"R":                   newBuiltInDefinition("R", []string{"#"}, [][]string{{"", ""}}),
+			"Reason":              newBuiltInDefinition("Reason", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Rebol":               newBuiltInDefinition("Rebol", []string{";"}, [][]string{{"", ""}}),
+			"Red":                 newBuiltInDefinition("Red", []string{";"}, [][]string{{"", ""}}),
+			"Rego":                newBuiltInDefinition("Rego", []string{"#"}, [][]string{{"", ""}}),
+			"RMarkdown":           newBuiltInDefinition("RMarkdown", []string{}, [][]string{{"", ""}}),
+			"RAML":                newBuiltInDefinition("RAML", []string{"#"}, [][]string{{"", ""}}),
+			"Racket":              newBuiltInDefinition("Racket", []string{";"}, [][]string{{"#|", "|#"}}),
+			"ReStructuredText":    newBuiltInDefinition("ReStructuredText", []string{}, [][]string{{"", ""}}),
+			"Ring":                newBuiltInDefinition("Ring", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
+			"Ruby":                newBuiltInDefinition("Ruby", []string{"#"}, [][]string{{":=begin", ":=end"}}),
+			"Ruby HTML":           newBuiltInDefinition("Ruby HTML", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Rust":                newBuiltInDefinition("Rust", []string{"//", "///", "//!"}, [][]string{{"/*", "*/"}}),
+			"Scala":               newBuiltInDefinition("Scala", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Sass":                newBuiltInDefinition("Sass", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Scheme":              newBuiltInDefinition("Scheme", []string{";"}, [][]string{{"#|", "|#"}}),
+			"sed":                 newBuiltInDefinition("sed", []string{"#"}, [][]string{{"", ""}}),
+			"Stan":                newBuiltInDefinition("Stan", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Starlark":            newBuiltInDefinition("Starlark", []string{"#"}, [][]string{{"", ""}}),
+			"Solidity":            newBuiltInDefinition("Solidity", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Bourne Shell":        newBuiltInDefinition("Bourne Shell", []string{"#"}, [][]string{{"", ""}}),
+			"Standard ML":         newBuiltInDefinition("Standard ML", []string{}, [][]string{{"(*", "*)"}}),
+			"SQL":                 newBuiltInDefinition("SQL", []string{"--"}, [][]string{{"/*", "*/"}}),
+			"Svelte":              newBuiltInDefinition("Svelte", []string{"//"}, [][]string{{"/*", "*/"}, {"<!--", "-->"}}),
+			"Swift":               newBuiltInDefinition("Swift", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Templ":               newBuiltInDefinition("Templ", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Terra":               newBuiltInDefinition("Terra", []string{"--"}, [][]string{{"--[[", "]]"}}),
+			"TeX":                 newBuiltInDefinition("TeX", []string{"%"}, [][]string{{"", ""}}),
+			"Inno Setup":          newBuiltInDefinition("Inno Setup", []string{";"}, [][]string{{"", ""}}),
+			"Isabelle":            newBuiltInDefinition("Isabelle", []string{}, [][]string{{"(*", "*)"}}),
+			"TLA":                 newBuiltInDefinition("TLA", []string{"\\*"}, [][]string{{"(*", "*)"}}),
+			"Tcl/Tk":              newBuiltInDefinition("Tcl/Tk", []string{"#"}, [][]string{{"", ""}}),
+			"TOML":                newBuiltInDefinition("TOML", []string{"#"}, [][]string{{"", ""}}),
+			"TypeScript":          newBuiltInDefinition("TypeScript", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"HCL":                 newBuiltInDefinition("HCL", []string{"#", "//"}, [][]string{{"/*", "*/"}}),
+			"Umka":                newBuiltInDefinition("Umka", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Unity-Prefab":        newBuiltInDefinition("Unity-Prefab", []string{}, [][]string{{"", ""}}),
+			"MSBuild script":      newBuiltInDefinition("MSBuild script", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Vala":                newBuiltInDefinition("Vala", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Verilog":             newBuiltInDefinition("Verilog", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"VimL":                newBuiltInDefinition("VimL", []string{`"`}, [][]string{{"", ""}}),
+			"Visual Basic":        newBuiltInDefinition("Visual Basic", []string{"'"}, [][]string{{"", ""}}),
+			"Vue":                 newBuiltInDefinition("Vue", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"Vyper":               newBuiltInDefinition("Vyper", []string{"#"}, [][]string{{"\"\"\"", "\"\"\""}}),
+			"WiX":                 newBuiltInDefinition("WiX", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"XML":                 newBuiltInDefinition("XML", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"XML resource":        newBuiltInDefinition("XML resource", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"XSLT":                newBuiltInDefinition("XSLT", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"XSD":                 newBuiltInDefinition("XSD", []string{"<!--"}, [][]string{{"<!--", "-->"}}),
+			"YAML":                newBuiltInDefinition("YAML", []string{"#"}, [][]string{{"", ""}}),
+			"Yacc":                newBuiltInDefinition("Yacc", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Yul":                 newBuiltInDefinition("Yul", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Zephir":              newBuiltInDefinition("Zephir", []string{"//"}, [][]string{{"/*", "*/"}}),
+			"Zig":                 newBuiltInDefinition("Zig", []string{"//", "///"}, [][]string{{"", ""}}),
+			"Zsh":                 newBuiltInDefinition("Zsh", []string{"#"}, [][]string{{"", ""}}),
 		},
 	}
 	for name, language := range definitions.Langs {

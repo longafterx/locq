@@ -3,71 +3,68 @@ package core
 import (
 	"fmt"
 	"io"
+	"maps"
 	"runtime"
 )
 
-// Options configures Analyze. Its zero value uses built-in languages, automatic
-// concurrency and no deduplication, just like a nil *Options.
-// Analyze does not modify Options or its slices. Do not modify them during a call.
+const MaxWorkers = 64
+
+// Options configures directory analysis. Nil and the zero value use built-in
+// languages, automatic concurrency and no deduplication. Inputs are copied once;
+// callers must not mutate options, maps or definitions during a call.
 type Options struct {
-	// Workers bounds concurrent file analysis and callback execution. Zero uses
-	// runtime.GOMAXPROCS(0), capped at MaxWorkers. Explicit values must be 1-MaxWorkers.
-	// One worker prevents overlapping callbacks within one Analyze call, but does
-	// not run them on the caller's goroutine.
+	// Workers is zero for automatic selection, or 1-MaxWorkers.
 	Workers int
-	// Dedup counts identical contents only once, retaining the first discovered file.
+	// Dedup retains the first discovered file for each distinct content hash.
 	Dedup bool
-
-	// ExcludeExts lists case-sensitive extensions without leading dots, such as
-	// "go" or "txt". Like --exclude-ext, these exclude the associated detected
-	// language, including its other extensions, rather than only a filename suffix.
-	ExcludeExts []string
-	// IncludeLangs lists exact built-in language names, such as "Go" or "Python".
-	// Unknown names are ignored, matching the CLI. If no recognized names remain,
-	// all languages are included, subject to other filters.
-	IncludeLangs []string
-	// Exclude lists case-sensitive globs for Analyze. After removing a trailing
-	// slash, unanchored patterns without / match names at any depth; others match
-	// paths relative to each input root. A leading slash anchors to that root,
-	// and a trailing slash restricts matching to directories. Supports ** and
-	// {a,b}. See README for scan-root and escape semantics.
+	// Include and Exclude contain case-sensitive globs. Bare names match at any
+	// depth; paths are relative to each root; leading / anchors to the root;
+	// trailing / matches directories only. Matching directories includes their
+	// descendants. Includes are ORed, exclusions always win, and unmatched parents
+	// remain reachable. An empty Include accepts all files. Supports ** and {a,b}.
+	Include []string
 	Exclude []string
-
-	// Match and NotMatch include and exclude files using the same glob rules as
-	// Exclude. A trailing / is invalid for file filters. Empty patterns disable
-	// the filter; exclusions take precedence over inclusions.
-	Match    string
-	NotMatch string
-	// MatchDir and NotMatchDir include and exclude directories and their contents
-	// using globs. A trailing / is optional. MatchDir never prunes unmatched parents,
-	// so nested matches remain reachable. Empty patterns disable the filter.
-	MatchDir    string
-	NotMatchDir string
-
-	// Debug logs analysis activity, including copies later excluded by Dedup.
-	// Records from different files may interleave.
-	Debug bool
-	// Diagnostics receives warnings and debug logs, never statistical output.
-	// Nil uses os.Stderr; io.Discard silences diagnostics. Writes are serialized
-	// within each Analyze call. A writer shared across calls must be concurrency-safe.
+	// Language filters use exact names. Unknown names are rejected. Exclusion wins.
+	IncludeLangs []string
+	ExcludeLangs []string
+	// Definitions adds or replaces built-in language definitions for this call.
+	// Keys must equal definition names. Extensions adds or overrides detection keys
+	// (extensions without dots or existing detector keys), mapped to defined names.
+	Definitions map[string]*LanguageDefinition
+	Extensions  map[string]string
+	Debug       bool
+	// Diagnostics receives serialized warnings/debug output. Nil uses stderr.
+	// A writer shared by multiple calls must be concurrency-safe.
 	Diagnostics io.Writer
-
-	// OnCode receives each code line as normalized by the parser (not raw source;
-	// surrounding whitespace and newlines are stripped). Callbacks within one
-	// file follow line order; different files may run concurrently. Callers must
-	// synchronize shared state. Analyze waits for all callbacks, including on errors.
-	// With Dedup, only retained, successfully read files trigger callbacks. Without
-	// Dedup, callbacks stream during analysis; later read errors cannot undo them.
-	// See ClocOptions.OnCode for buffering, temporary files and replay error semantics.
-	OnCode func(line string)
-	// OnBlank receives each blank line, with the same contract as OnCode.
-	OnBlank func(line string)
-	// OnComment receives each comment line, with the same contract as OnCode.
-	OnComment func(line string)
 }
 
-// OptionError identifies an invalid Options field. Validation happens before
-// scanning files or invoking callbacks. Unwrap exposes the underlying error.
+// FileOptions configures synchronous single-input analysis. It deliberately has
+// no directory filters, deduplication or worker settings.
+type FileOptions struct {
+	Debug       bool
+	Diagnostics io.Writer
+	// OnLine runs on the caller's goroutine in physical line order. Text owns its
+	// storage and contains parser-normalized text (trimmed whitespace and engine
+	// BOM handling), without a newline. Number is one-based. Events already sent
+	// cannot be undone on a later read error; incomplete failing lines are omitted.
+	OnLine func(LineEvent)
+}
+
+type LineKind uint8
+
+const (
+	CodeLine LineKind = iota
+	CommentLine
+	BlankLine
+)
+
+type LineEvent struct {
+	Number int64
+	Kind   LineKind
+	Text   string
+}
+
+// OptionError identifies invalid caller configuration, before any I/O.
 type OptionError struct {
 	Field string
 	Err   error
@@ -76,56 +73,104 @@ type OptionError struct {
 func (e *OptionError) Error() string { return fmt.Sprintf("invalid %s: %v", e.Field, e.Err) }
 func (e *OptionError) Unwrap() error { return e.Err }
 
-func (opts *Options) prepare(languages *DefinedLanguages) (*ClocOptions, error) {
-	return opts.prepareWithExts(languages, Exts)
+// runConfig is a validated snapshot. Workers and readers never mutate it.
+type runConfig struct {
+	Workers      int
+	Dedup        bool
+	Debug        bool
+	IncludeLangs map[string]struct{}
+	ExcludeLangs map[string]struct{}
+	exts         map[string]string
+	languages    *DefinedLanguages
+	filter       *pathFilter
 }
 
-func (opts *Options) prepareWithExts(languages *DefinedLanguages, exts map[string]string) (*ClocOptions, error) {
+// runState owns one invocation's mutable diagnostics and single-input observer.
+// Directory analysis never installs an observer.
+type runState struct {
+	*runConfig
+	diagnostics *diagnosticSink
+	onLine      func(LineEvent)
+}
+
+// ValidateWorkers shares worker validation with the command's informational
+// exits, which do not otherwise prepare a scan configuration.
+func ValidateWorkers(workers int) error {
+	if workers < 0 || workers > MaxWorkers {
+		return fmt.Errorf("must be zero (automatic) or between 1 and %d", MaxWorkers)
+	}
+	return nil
+}
+
+func (opts *Options) prepare() (*runConfig, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
-	if opts.Workers < 0 || opts.Workers > MaxWorkers {
-		return nil, &OptionError{
-			Field: "Workers",
-			Err:   fmt.Errorf("must be zero (automatic) or between 1 and %d", MaxWorkers),
-		}
+	if err := ValidateWorkers(opts.Workers); err != nil {
+		return nil, &OptionError{Field: "Workers", Err: err}
 	}
+
 	workers := opts.Workers
 	if workers == 0 {
 		workers = min(runtime.GOMAXPROCS(0), MaxWorkers)
 	}
-	prepared := &ClocOptions{
-		Exclude:        append([]string{}, opts.Exclude...),
-		Workers:        workers,
-		SkipDuplicated: !opts.Dedup,
-		ExcludeExts:    make(map[string]struct{}, len(opts.ExcludeExts)),
-		IncludeLangs:   make(map[string]struct{}, len(opts.IncludeLangs)),
-		Match:          opts.Match,
-		NotMatch:       opts.NotMatch,
-		MatchDir:       opts.MatchDir,
-		NotMatchDir:    opts.NotMatchDir,
-		Debug:          opts.Debug,
-		Diagnostics:    opts.Diagnostics,
-		OnCode:         opts.OnCode,
-		OnBlank:        opts.OnBlank,
-		OnComment:      opts.OnComment,
+	config := &runConfig{Workers: workers, Dedup: opts.Dedup, Debug: opts.Debug,
+		languages: NewDefinedLanguages(), exts: builtInExtensions,
+		IncludeLangs: map[string]struct{}{}, ExcludeLangs: map[string]struct{}{}}
+	for name, definition := range opts.Definitions {
+		if definition == nil || name != definition.Name {
+			return nil, &OptionError{Field: "Definitions", Err: fmt.Errorf("key %q must match a nonnil definition's name", name)}
+		}
+		snapshot, err := snapshotDefinition(definition)
+		if err != nil {
+			return nil, &OptionError{Field: "Definitions", Err: err}
+		}
+		config.languages.Langs[name] = snapshot
 	}
-	filter, err := preparePathFilter(prepared)
+	// Built-in mappings are private and immutable. Clone only when applying
+	// caller overrides; ordinary scans need no extra copy of the whole catalog.
+	if len(opts.Extensions) > 0 {
+		config.exts = maps.Clone(builtInExtensions)
+	}
+	for extension, name := range opts.Extensions {
+		if _, ok := config.languages.Langs[name]; !ok {
+			return nil, &OptionError{Field: "Extensions", Err: fmt.Errorf("%q maps to unknown language %q", extension, name)}
+		}
+		config.exts[extension] = name
+	}
+	for _, filter := range []struct {
+		field  string
+		names  []string
+		target map[string]struct{}
+	}{
+		{"IncludeLangs", opts.IncludeLangs, config.IncludeLangs}, {"ExcludeLangs", opts.ExcludeLangs, config.ExcludeLangs},
+	} {
+		for _, name := range filter.names {
+			if _, ok := config.languages.Langs[name]; !ok {
+				return nil, &OptionError{Field: filter.field, Err: fmt.Errorf("unknown language %q", name)}
+			}
+			filter.target[name] = struct{}{}
+		}
+	}
+	var err error
+	config.filter, err = preparePathFilter(opts.Include, opts.Exclude)
 	if err != nil {
 		return nil, err
 	}
-	prepared.filter = filter
-	for _, ext := range opts.ExcludeExts {
-		if language, ok := exts[ext]; ok {
-			prepared.ExcludeExts[language] = struct{}{}
-			continue
-		}
-		prepared.ExcludeExts[ext] = struct{}{}
+	return config, nil
+}
+
+func snapshotDefinition(definition *LanguageDefinition) (*LanguageDefinition, error) {
+	if definition == nil || definition.Name == "" {
+		return nil, &OptionError{Field: "Language", Err: fmt.Errorf("a named language definition is required")}
 	}
-	for _, language := range opts.IncludeLangs {
-		if _, ok := languages.Langs[language]; ok {
-			prepared.IncludeLangs[language] = struct{}{}
+	for _, pair := range definition.multiLines {
+		if len(pair) != 2 || ((pair[0] == "") != (pair[1] == "")) {
+			return nil, &OptionError{Field: "Language", Err: fmt.Errorf("%q has an invalid block comment pair", definition.Name)}
 		}
 	}
-	return prepared, nil
+	result := NewLanguageDefinition(definition.Name, definition.lineComments, definition.multiLines)
+	result.syntax = definition.syntax
+	result.regexLineComments = append(result.regexLineComments, definition.regexLineComments...)
+	return result, nil
 }

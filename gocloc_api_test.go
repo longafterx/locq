@@ -3,20 +3,16 @@ package gocloc_test
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
+	"testing/iotest"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/longafterx/gocloc"
 )
 
@@ -50,16 +46,6 @@ func TestAnalyzeDefaultsAndDedup(t *testing.T) {
 			if len(result.Files) != int(tc.files) || result.Files[filepath.Join(dir, "a.go")] == nil {
 				t.Fatalf("unexpected retained files: %v", result.Files)
 			}
-			legacy := gocloc.NewClocOptions()
-			legacy.Workers = 1
-			legacy.SkipDuplicated = tc.files == 2
-			want, err := gocloc.NewProcessor(gocloc.NewDefinedLanguages(), legacy).Analyze([]string{dir})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(result, want) {
-				t.Fatal("new entry point changed counts or retained files")
-			}
 		})
 	}
 }
@@ -73,56 +59,6 @@ func TestAnalyzeEmptyPaths(t *testing.T) {
 	hasFiles := len(result.Files) != 0 || len(result.Languages) != 0
 	if result.Total.Total != 0 || hasFiles {
 		t.Fatalf("empty paths must not scan the current directory: %+v", result)
-	}
-}
-
-func TestAnalyzeGlobExclusions(t *testing.T) {
-	t.Parallel()
-	dir := writeAPIFixture(t, map[string]string{
-		"main.go":                        "package keep\n",
-		"dist/generated.go":              "package excluded\n",
-		"src/node_modules/lib.go":        "package excluded\n",
-		"src/target/nested/generated.go": "package excluded\n",
-		"gcc.target/keep.go":             "package keep\n",
-		"distribution/keep.go":           "package keep\n",
-		"my-dist/keep.go":                "package keep\n",
-		"src/skip_test.go":               "package excluded\n",
-	})
-	want := []string{"distribution/keep.go", "gcc.target/keep.go", "main.go", "my-dist/keep.go"}
-	for _, count := range []int{1, 4} {
-		t.Run(fmt.Sprintf("workers=%d", count), func(t *testing.T) {
-			patterns := []string{"{dist,node_modules,target}/", "*_test.go"}
-			var calls atomic.Int32
-			opts := &gocloc.Options{
-				Workers: count, Exclude: patterns, Match: "*.go",
-				OnCode: func(line string) {
-					calls.Add(1)
-					if line != "package keep" {
-						t.Errorf("excluded line reached callback: %q", line)
-					}
-				},
-			}
-			result, err := gocloc.Analyze([]string{dir}, opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := apiRelativeFiles(t, dir, result); !reflect.DeepEqual(got, want) {
-				t.Fatalf("files=%q, want %q", got, want)
-			}
-			if calls.Load() != int32(len(want)) || patterns[0] != "{dist,node_modules,target}/" {
-				t.Fatal("excluded callbacks ran or caller patterns changed")
-			}
-			legacy := gocloc.NewClocOptions()
-			legacy.Workers = count
-			legacy.Exclude = patterns
-			legacyResult, err := gocloc.NewProcessor(gocloc.NewDefinedLanguages(), legacy).Analyze([]string{dir})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(result, legacyResult) {
-				t.Fatal("Analyze and Processor disagree on glob exclusions")
-			}
-		})
 	}
 }
 
@@ -202,197 +138,6 @@ func TestAnalyzeGlobRoots(t *testing.T) {
 	}
 }
 
-func TestAnalyzeDirectoryGlobRoots(t *testing.T) {
-	t.Parallel()
-	dir := writeAPIFixture(t, map[string]string{
-		"src/main.go":             "package sample\n",
-		"src/lib/deep.go":         "package sample\n",
-		"src/target/generated.go": "package sample\n",
-		"src/target-old/keep.go":  "package sample\n",
-		"tests/main.go":           "package sample\n",
-		"tests/lib/deep.go":       "package sample\n",
-		"gcc.target/keep.go":      "package sample\n",
-		"target/generated.go":     "package sample\n",
-	})
-	src := []string{"src/lib/deep.go", "src/main.go", "src/target-old/keep.go", "src/target/generated.go"}
-	for _, tc := range []struct {
-		name  string
-		opts  gocloc.Options
-		paths []string
-		want  []string
-	}{
-		{name: "include subtree", opts: gocloc.Options{MatchDir: "src/"}, want: src},
-		{name: "anchored include subtree", opts: gocloc.Options{MatchDir: "/src/"}, want: src},
-		{
-			name: "nested directory name", opts: gocloc.Options{MatchDir: "lib"},
-			want: []string{"src/lib/deep.go", "tests/lib/deep.go"},
-		},
-		{
-			name: "nested directory path remains reachable", opts: gocloc.Options{MatchDir: "src/lib/"},
-			want: []string{"src/lib/deep.go"},
-		},
-		{
-			name: "globstar directories", opts: gocloc.Options{MatchDir: "**/lib/"},
-			want: []string{"src/lib/deep.go", "tests/lib/deep.go"},
-		},
-		{
-			name: "directory and file inclusions intersect",
-			opts: gocloc.Options{MatchDir: "{src,tests}/", Match: "main.go"},
-			want: []string{"src/main.go", "tests/main.go"},
-		},
-		{
-			name: "directory exclusion keeps partial names",
-			opts: gocloc.Options{MatchDir: "src/", NotMatchDir: "target/"},
-			want: []string{"src/lib/deep.go", "src/main.go", "src/target-old/keep.go"},
-		},
-		{
-			name: "combined exclusions win",
-			opts: gocloc.Options{
-				MatchDir: "src/", Exclude: []string{"lib/"},
-				NotMatchDir: "target/", NotMatch: "keep.go",
-			},
-			want: []string{"src/main.go"},
-		},
-		{
-			name: "exclude wins over directory inclusion",
-			opts: gocloc.Options{MatchDir: "src/", Exclude: []string{"src/"}}, want: []string{},
-		},
-		{
-			name: "input directory name included", opts: gocloc.Options{MatchDir: "src/"},
-			paths: []string{filepath.Join(dir, "src")}, want: src,
-		},
-		{
-			name: "anchored rule does not match input directory", opts: gocloc.Options{MatchDir: "/src/"},
-			paths: []string{filepath.Join(dir, "src")}, want: []string{},
-		},
-		{
-			name: "input directory name excluded", opts: gocloc.Options{NotMatchDir: "target"},
-			paths: []string{filepath.Join(dir, "target")}, want: []string{},
-		},
-		{
-			name: "anchored exclusion per root", opts: gocloc.Options{NotMatchDir: "/target/"},
-			paths: []string{filepath.Join(dir, "src")},
-			want:  []string{"src/lib/deep.go", "src/main.go", "src/target-old/keep.go"},
-		},
-		{
-			name: "outside include ancestor ignored", opts: gocloc.Options{MatchDir: "src/"},
-			paths: []string{filepath.Join(dir, "src/lib")}, want: []string{},
-		},
-		{
-			name: "outside exclude ancestor ignored", opts: gocloc.Options{NotMatchDir: "src/"},
-			paths: []string{filepath.Join(dir, "src/lib")}, want: []string{"src/lib/deep.go"},
-		},
-		{
-			name: "explicit file parent included", opts: gocloc.Options{MatchDir: "src/", Match: "/main.go"},
-			paths: []string{filepath.Join(dir, "src/main.go")}, want: []string{"src/main.go"},
-		},
-		{
-			name: "explicit file parent excluded", opts: gocloc.Options{NotMatchDir: "target/"},
-			paths: []string{filepath.Join(dir, "target/generated.go")}, want: []string{},
-		},
-		{
-			name: "explicit file outside ancestor ignored", opts: gocloc.Options{MatchDir: "src/"},
-			paths: []string{filepath.Join(dir, "src/lib/deep.go")}, want: []string{},
-		},
-		{
-			name: "independent file pattern roots", opts: gocloc.Options{Match: "lib/*.go"},
-			paths: []string{filepath.Join(dir, "src"), filepath.Join(dir, "tests")},
-			want:  []string{"src/lib/deep.go", "tests/lib/deep.go"},
-		},
-		{
-			name: "plain directory pattern does not match substrings", opts: gocloc.Options{MatchDir: "target"},
-			want: []string{"src/target/generated.go", "target/generated.go"},
-		},
-		{
-			name: "regex anchors are literal", opts: gocloc.Options{Match: "^main.go$"}, want: []string{},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			paths := tc.paths
-			if paths == nil {
-				paths = []string{dir}
-			}
-			for _, workers := range []int{1, 4} {
-				t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
-					var calls atomic.Int32
-					opts := tc.opts
-					opts.Workers = workers
-					opts.OnCode = func(string) { calls.Add(1) }
-					processorOpts := gocloc.NewClocOptions()
-					processorOpts.Workers = workers
-					processorOpts.Exclude = opts.Exclude
-					processorOpts.Match = opts.Match
-					processorOpts.NotMatch = opts.NotMatch
-					processorOpts.MatchDir = opts.MatchDir
-					processorOpts.NotMatchDir = opts.NotMatchDir
-					processorOpts.OnCode = opts.OnCode
-					for _, analyze := range []func() (*gocloc.Result, error){
-						func() (*gocloc.Result, error) { return gocloc.Analyze(paths, &opts) },
-						func() (*gocloc.Result, error) {
-							return gocloc.NewProcessor(gocloc.NewDefinedLanguages(), processorOpts).Analyze(paths)
-						},
-					} {
-						calls.Store(0)
-						result, err := analyze()
-						if err != nil {
-							t.Fatal(err)
-						}
-						if got := apiRelativeFiles(t, dir, result); !reflect.DeepEqual(got, tc.want) {
-							t.Fatalf("files=%q, want %q", got, tc.want)
-						}
-						if calls.Load() != int32(len(tc.want)) {
-							t.Fatalf("callbacks=%d, want %d", calls.Load(), len(tc.want))
-						}
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestGlobValidationPrecedesScanning(t *testing.T) {
-	t.Parallel()
-	for _, pattern := range []string{"", "/", "[", "{dist,target", "../target", "src/../target", `C:\target`} {
-		t.Run(pattern, func(t *testing.T) {
-			for _, emptyPaths := range []bool{false, true} {
-				paths := []string{filepath.Join(t.TempDir(), "missing")}
-				if emptyPaths {
-					paths = []string{}
-				}
-				var diagnostics bytes.Buffer
-				var calls atomic.Int32
-				legacy := gocloc.NewClocOptions()
-				legacy.Exclude = []string{"valid/", pattern}
-				legacy.Diagnostics = &diagnostics
-				legacy.OnCode = func(string) { calls.Add(1) }
-				analyze := func() (*gocloc.Result, error) {
-					return gocloc.Analyze(paths, &gocloc.Options{
-						Exclude: legacy.Exclude, Diagnostics: legacy.Diagnostics, OnCode: legacy.OnCode,
-					})
-				}
-				for _, run := range []func() (*gocloc.Result, error){
-					analyze,
-					func() (*gocloc.Result, error) {
-						return gocloc.NewProcessor(gocloc.NewDefinedLanguages(), legacy).Analyze(paths)
-					},
-				} {
-					result, err := run()
-					var optionErr *gocloc.OptionError
-					if !errors.As(err, &optionErr) || optionErr.Field != "Exclude" {
-						t.Fatalf("error=%v, want OptionError for Exclude", err)
-					}
-					if result != nil || diagnostics.Len() != 0 || calls.Load() != 0 {
-						t.Fatal("invalid glob triggered scanning or callbacks")
-					}
-					if !strings.Contains(err.Error(), "pattern 2") {
-						t.Fatalf("error lacks pattern index: %v", err)
-					}
-				}
-			}
-		})
-	}
-}
-
 func apiRelativeFiles(t *testing.T, root string, result *gocloc.Result) []string {
 	t.Helper()
 	files := make([]string, 0, len(result.Files))
@@ -411,332 +156,15 @@ func apiRelativeFiles(t *testing.T, root string, result *gocloc.Result) []string
 	return files
 }
 
-func TestReplacedExtensionsAffectPublicAnalysis(t *testing.T) {
-	// Exts is a mutable compatibility variable. This top-level test does not
-	// run in parallel because it temporarily replaces the package mapping.
-	preexistingLanguages := gocloc.NewDefinedLanguages()
-	original := gocloc.Exts
-	modified := make(map[string]string, len(original)+1)
-	for ext, language := range original {
-		modified[ext] = language
-	}
-	modified["gox"] = "Go"
-	gocloc.Exts = modified
-	t.Cleanup(func() { gocloc.Exts = original })
-	if !strings.Contains(gocloc.NewDefinedLanguages().GetFormattedString(), "gox") {
-		t.Fatal("language listing ignored the replaced extension mapping")
-	}
-	if !strings.Contains(preexistingLanguages.GetFormattedString(), "gox") {
-		t.Fatal("existing language listing ignored the replaced extension mapping")
-	}
-
-	dir := writeAPIFixture(t, map[string]string{"sample.gox": "package sample\n"})
-	for _, tc := range []struct {
-		name    string
-		analyze func() (*gocloc.Result, error)
-	}{
-		{name: "Analyze", analyze: func() (*gocloc.Result, error) {
-			return gocloc.Analyze([]string{dir}, nil)
-		}},
-		{name: "Processor", analyze: func() (*gocloc.Result, error) {
-			return gocloc.NewProcessor(gocloc.NewDefinedLanguages(), gocloc.NewClocOptions()).Analyze([]string{dir})
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := tc.analyze()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if result.Total.Total != 1 || result.Total.Code != 1 || result.Languages["Go"] == nil {
-				t.Fatalf("replacement extension mapping was ignored: %+v", result.Total)
-			}
-		})
-	}
-
-	excluded, err := gocloc.Analyze([]string{dir}, &gocloc.Options{ExcludeExts: []string{"gox"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if excluded.Total.Total != 0 {
-		t.Fatalf("custom extension filter was ignored: %+v", excluded.Total)
-	}
-}
-
-func TestAnalyzeFilters(t *testing.T) {
-	t.Parallel()
-	dir := writeAPIFixture(t, map[string]string{
-		"src/main.go":      "package main\n",
-		"src/main_test.go": "package main\n",
-		"scripts/main.py":  "print(1)\n",
-		"docs/alias.text":  "more plain text\n",
-		"scripts/tool.go":  "#!/usr/bin/env python\nprint(3)\n",
-		"docs/readme.txt":  "plain text\n",
-		"vendor/lib.go":    "package lib\n",
-	})
-	all := []string{
-		"docs/alias.text", "docs/readme.txt", "scripts/main.py", "scripts/tool.go",
-		"src/main.go", "src/main_test.go", "vendor/lib.go",
-	}
-	goFiles := []string{"src/main.go", "src/main_test.go", "vendor/lib.go"}
-	for _, tc := range []struct {
-		name  string
-		opts  gocloc.Options
-		paths []string
-		want  []string
-	}{
-		{name: "no filters", opts: gocloc.Options{}, want: all},
-		{
-			name: "glob combined with language filters",
-			opts: gocloc.Options{
-				Exclude: []string{"src/"}, Match: "*.go", NotMatch: "lib.go",
-				IncludeLangs: []string{"Go", "Python"}, ExcludeExts: []string{"txt"},
-			},
-			want: []string{"scripts/tool.go"},
-		},
-		{name: "include language", opts: gocloc.Options{IncludeLangs: []string{"Go"}}, want: goFiles},
-		{
-			name: "ignore unknown include names",
-			opts: gocloc.Options{IncludeLangs: []string{"Go", "unknown", "Go"}}, want: goFiles,
-		},
-		{name: "only unknown include names", opts: gocloc.Options{IncludeLangs: []string{"unknown"}}, want: all},
-		{
-			name: "extension maps to detected language including aliases and shebang",
-			opts: gocloc.Options{ExcludeExts: []string{"py", "txt"}}, want: goFiles,
-		},
-		{name: "unknown exclude extension", opts: gocloc.Options{ExcludeExts: []string{"unknown"}}, want: all},
-		{
-			name: "exclude wins over include",
-			opts: gocloc.Options{IncludeLangs: []string{"Go"}, ExcludeExts: []string{"go"}}, want: []string{},
-		},
-		{
-			name: "file glob",
-			opts: gocloc.Options{Match: "*.go", NotMatch: "*_test.go"},
-			want: []string{"scripts/tool.go", "src/main.go", "vendor/lib.go"},
-		},
-		{
-			name: "directory glob",
-			opts: gocloc.Options{MatchDir: "{src,vendor}/", NotMatchDir: "vendor/"},
-			want: []string{"src/main.go", "src/main_test.go"},
-		},
-		{
-			name: "relative path glob",
-			opts: gocloc.Options{Match: "src/**/*.go", NotMatch: "*_test.go"},
-			want: []string{"src/main.go"},
-		},
-		{
-			name: "whole filename without substring matching",
-			opts: gocloc.Options{Match: "main"}, want: []string{},
-		},
-		{
-			name: "multiple file and directory roots", opts: gocloc.Options{},
-			paths: []string{filepath.Join(dir, "src/main.go"), filepath.Join(dir, "docs")},
-			want:  []string{"docs/alias.text", "docs/readme.txt", "src/main.go"},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			paths := tc.paths
-			if paths == nil {
-				paths = []string{dir}
-			}
-			result, err := gocloc.Analyze(paths, &tc.opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := []string{}
-			for path := range result.Files {
-				relative, err := filepath.Rel(dir, path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				got = append(got, filepath.ToSlash(relative))
-			}
-			sort.Strings(got)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("files=%q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestAnalyzeValidatesBeforeScanning(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		field  string
-		opts   gocloc.Options
-		syntax bool
-	}{
-		{name: "workers", field: "Workers", opts: gocloc.Options{Workers: -1}},
-		{name: "file include", field: "Match", opts: gocloc.Options{Match: "["}, syntax: true},
-		{name: "file exclude", field: "NotMatch", opts: gocloc.Options{NotMatch: "["}, syntax: true},
-		{name: "directory include", field: "MatchDir", opts: gocloc.Options{MatchDir: "["}, syntax: true},
-		{name: "directory exclude", field: "NotMatchDir", opts: gocloc.Options{NotMatchDir: "["}, syntax: true},
-		{name: "file include directory suffix", field: "Match", opts: gocloc.Options{Match: "src/"}},
-		{name: "file exclude directory suffix", field: "NotMatch", opts: gocloc.Options{NotMatch: "src/"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var diagnostics bytes.Buffer
-			var calls atomic.Int32
-			opts := tc.opts
-			opts.Diagnostics = &diagnostics
-			opts.OnCode = func(string) { calls.Add(1) }
-			paths := []string{filepath.Join(t.TempDir(), "missing")}
-			runners := []struct {
-				name string
-				run  func() (*gocloc.Result, error)
-			}{
-				{name: "Analyze", run: func() (*gocloc.Result, error) {
-					return gocloc.Analyze(paths, &opts)
-				}},
-			}
-			if tc.field != "Workers" {
-				processorOpts := gocloc.NewClocOptions()
-				processorOpts.Match = opts.Match
-				processorOpts.NotMatch = opts.NotMatch
-				processorOpts.MatchDir = opts.MatchDir
-				processorOpts.NotMatchDir = opts.NotMatchDir
-				processorOpts.Diagnostics = opts.Diagnostics
-				processorOpts.OnCode = opts.OnCode
-				runners = append(runners, struct {
-					name string
-					run  func() (*gocloc.Result, error)
-				}{name: "Processor", run: func() (*gocloc.Result, error) {
-					return gocloc.NewProcessor(gocloc.NewDefinedLanguages(), processorOpts).Analyze(paths)
-				}})
-			}
-			for _, runner := range runners {
-				t.Run(runner.name, func(t *testing.T) {
-					result, err := runner.run()
-					var optionErr *gocloc.OptionError
-					if !errors.As(err, &optionErr) {
-						t.Fatalf("error=%v, want OptionError", err)
-					}
-					if result != nil || optionErr.Field != tc.field {
-						t.Fatalf(
-							"result=%+v error=%v, want OptionError for %s",
-							result,
-							err,
-							tc.field,
-						)
-					}
-					if diagnostics.Len() != 0 || calls.Load() != 0 {
-						t.Fatal("invalid options triggered scanning or callbacks")
-					}
-					if errors.Is(err, doublestar.ErrBadPattern) != tc.syntax {
-						t.Fatalf("unexpected wrapped glob syntax error: %v", err)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestAnalyzeCallbacksFollowDedup(t *testing.T) {
-	t.Parallel()
-	dir := writeAPIFixture(t, map[string]string{
-		"a.go": "package a\n// comment\n\n", "b.go": "package a\n// comment\n\n",
-	})
-	for _, workers := range []int{0, 1, 4} {
-		for _, dedup := range []bool{false, true} {
-			t.Run(fmt.Sprintf("workers=%d/dedup=%t", workers, dedup), func(t *testing.T) {
-				var code, comment, blank atomic.Int32
-				var diagnostics bytes.Buffer
-				opts := &gocloc.Options{
-					Workers: workers, Dedup: dedup, Debug: true, Diagnostics: &diagnostics,
-					OnCode:    func(string) { code.Add(1) },
-					OnComment: func(string) { comment.Add(1) },
-					OnBlank:   func(string) { blank.Add(1) },
-				}
-				result, err := gocloc.Analyze([]string{dir}, opts)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := int32(2)
-				if dedup {
-					want = 1
-				}
-				counts := []int32{result.Total.Total, code.Load(), comment.Load(), blank.Load()}
-				if !reflect.DeepEqual(counts, []int32{want, want, want, want}) {
-					t.Fatalf("files and callbacks=%v, want %d each", counts, want)
-				}
-				if !strings.Contains(diagnostics.String(), "[FILE]") {
-					t.Fatal("debug output did not use the supplied writer")
-				}
-			})
-		}
-	}
-}
-
-func TestAnalyzeAutomaticCallbacksOverlapAndWait(t *testing.T) {
-	previous := runtime.GOMAXPROCS(2)
-	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
-	dir := writeAPIFixture(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
-	for _, dedup := range []bool{false, true} {
-		t.Run(fmt.Sprintf("dedup=%t", dedup), func(t *testing.T) {
-			entered := make(chan struct{}, 2)
-			release := make(chan struct{})
-			unblock := sync.OnceFunc(func() { close(release) })
-			var finished atomic.Int32
-			opts := &gocloc.Options{
-				Dedup: dedup,
-				OnCode: func(string) {
-					entered <- struct{}{}
-					<-release
-					finished.Add(1)
-				},
-			}
-			done := make(chan error, 1)
-			go func() {
-				_, err := gocloc.Analyze([]string{dir}, opts)
-				done <- err
-				close(done)
-			}()
-			t.Cleanup(func() {
-				unblock()
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					t.Error("Analyze did not finish after releasing callbacks")
-				}
-			})
-			timeout := time.NewTimer(5 * time.Second)
-			defer timeout.Stop()
-			for range 2 {
-				select {
-				case <-entered:
-				case err := <-done:
-					t.Fatalf("Analyze returned with blocked callbacks: %v", err)
-				case <-timeout.C:
-					t.Fatal("automatic workers did not run callbacks concurrently")
-				}
-			}
-			select {
-			case err := <-done:
-				t.Fatalf("Analyze returned before callbacks finished: %v", err)
-			default:
-			}
-			unblock()
-			select {
-			case err := <-done:
-				if err != nil || finished.Load() != 2 {
-					t.Fatalf("error=%v finished=%d, want both callbacks complete", err, finished.Load())
-				}
-			case <-timeout.C:
-				t.Fatal("Analyze failed to return after callbacks finished")
-			}
-		})
-	}
-}
-
 func TestAnalyzeOptionsCanBeReusedConcurrently(t *testing.T) {
 	t.Parallel()
 	dir := writeAPIFixture(t, map[string]string{"main.go": "package main\n", "main.py": "print(1)\n"})
 	opts := &gocloc.Options{
-		IncludeLangs: []string{"Go"}, ExcludeExts: []string{"txt"}, Match: "*.go",
+		IncludeLangs: []string{"Go"}, ExcludeLangs: []string{"Plain Text"}, Include: []string{"*.go"},
 	}
 	want := *opts
 	want.IncludeLangs = append([]string{}, opts.IncludeLangs...)
-	want.ExcludeExts = append([]string{}, opts.ExcludeExts...)
+	want.ExcludeLangs = append([]string{}, opts.ExcludeLangs...)
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)
@@ -785,4 +213,259 @@ func writeAPIFixture(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+func TestAnalyzeGlobSelections(t *testing.T) {
+	t.Parallel()
+	root := writeAPIFixture(t, map[string]string{
+		"main.go": "package main\n", "target/a.go": "package generated\n", "src/target/b.go": "package generated\n",
+		"gcc.target/a.go": "package keep\n", "distribution/a.go": "package keep\n", "my-dist/a.go": "package keep\n",
+		"src/main.go": "package main\n", "src/skip_test.go": "package test\n", "src/nested/mod.py": "print(1)\n",
+		"tests/main.go": "package test\n", "scripts/run.py": "print(1)\n", ".hidden/main.go": "package hidden\n",
+	})
+	for _, tc := range []struct {
+		name string
+		opts gocloc.Options
+		want []string
+	}{
+		{
+			name: "exact excluded directories",
+			opts: gocloc.Options{Exclude: []string{"{dist,node_modules,target}/", "*_test.go"}},
+			want: []string{
+				".hidden/main.go",
+				"distribution/a.go",
+				"gcc.target/a.go",
+				"main.go",
+				"my-dist/a.go",
+				"scripts/run.py",
+				"src/main.go",
+				"src/nested/mod.py",
+				"tests/main.go",
+			},
+		},
+		{
+			name: "nested inclusion remains reachable",
+			opts: gocloc.Options{Include: []string{"nested/"}},
+			want: []string{"src/nested/mod.py"},
+		},
+		{
+			name: "directory descendants",
+			opts: gocloc.Options{Include: []string{"/src/"}, Exclude: []string{"target/", "*_test.go"}},
+			want: []string{"src/main.go", "src/nested/mod.py"},
+		},
+		{
+			name: "include patterns are ORed",
+			opts: gocloc.Options{Include: []string{"/src/main.go", "scripts/"}},
+			want: []string{"scripts/run.py", "src/main.go"},
+		},
+		{
+			name: "file and directory same pattern",
+			opts: gocloc.Options{Include: []string{"main.go"}},
+			want: []string{".hidden/main.go", "main.go", "src/main.go", "tests/main.go"},
+		},
+		{name: "anchored file", opts: gocloc.Options{Include: []string{"/main.go"}}, want: []string{"main.go"}},
+		{name: "exclusion wins", opts: gocloc.Options{Include: []string{"src/"}, Exclude: []string{"src/"}}, want: []string{}},
+		{
+			name: "language inclusion",
+			opts: gocloc.Options{IncludeLangs: []string{"Python"}},
+			want: []string{"scripts/run.py", "src/nested/mod.py"},
+		},
+		{
+			name: "language exclusion wins",
+			opts: gocloc.Options{IncludeLangs: []string{"Go"}, ExcludeLangs: []string{"Go"}},
+			want: []string{},
+		},
+		{
+			name: "suffix exclusion is literal glob",
+			opts: gocloc.Options{Include: []string{"src/"}, Exclude: []string{"*.go"}},
+			want: []string{"src/nested/mod.py"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, workers := range []int{1, 4} {
+				tc.opts.Workers = workers
+				result, err := gocloc.Analyze([]string{root}, &tc.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := apiRelativeFiles(t, root, result); !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("files=%q want=%q", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalyzeIncludeRoots(t *testing.T) {
+	root := writeAPIFixture(t, map[string]string{"src/main.go": "package main\n", "tests/main.go": "package test\n"})
+	for _, tc := range []struct {
+		paths   []string
+		include []string
+		want    []string
+	}{
+		{[]string{filepath.Join(root, "src")}, []string{"src/"}, []string{"src/main.go"}},
+		{[]string{filepath.Join(root, "src/main.go")}, []string{"src/"}, []string{"src/main.go"}},
+		{[]string{filepath.Join(root, "src/main.go")}, []string{"/main.go"}, []string{"src/main.go"}},
+		{[]string{filepath.Join(root, "src/main.go")}, []string{"/src/"}, []string{}},
+		{
+			[]string{filepath.Join(root, "src"), filepath.Join(root, "tests")},
+			[]string{"/main.go"},
+			[]string{"src/main.go", "tests/main.go"},
+		},
+	} {
+		result, err := gocloc.Analyze(tc.paths, &gocloc.Options{Include: tc.include})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := apiRelativeFiles(t, root, result); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf(
+				"include=%q paths=%q files=%q want=%q",
+				tc.include,
+				tc.paths,
+				got,
+				tc.want,
+			)
+		}
+	}
+}
+
+func TestOptionsValidationPrecedesIO(t *testing.T) {
+	for _, tc := range []struct {
+		opts  gocloc.Options
+		field string
+	}{
+		{gocloc.Options{Workers: -1}, "Workers"}, {gocloc.Options{Workers: 65}, "Workers"},
+		{gocloc.Options{Include: []string{"["}}, "Include"}, {gocloc.Options{Exclude: []string{"["}}, "Exclude"},
+		{gocloc.Options{Exclude: []string{""}}, "Exclude"}, {gocloc.Options{Include: []string{"../*"}}, "Include"},
+		{gocloc.Options{IncludeLangs: []string{"typo"}}, "IncludeLangs"}, {gocloc.Options{ExcludeLangs: []string{"typo"}}, "ExcludeLangs"},
+		{gocloc.Options{Definitions: map[string]*gocloc.LanguageDefinition{"broken": nil}}, "Definitions"},
+		{gocloc.Options{Extensions: map[string]string{"custom": "unknown"}}, "Extensions"},
+	} {
+		var output bytes.Buffer
+		tc.opts.Diagnostics = &output
+		result, err := gocloc.Analyze([]string{"nonexistent"}, &tc.opts)
+		var optionErr *gocloc.OptionError
+		if result != nil || !errors.As(err, &optionErr) || optionErr.Field != tc.field || output.Len() != 0 {
+			t.Fatalf(
+				"result=%v error=%v diagnostics=%q",
+				result,
+				err,
+				output.String(),
+			)
+		}
+	}
+}
+
+func TestPerCallLanguageConfiguration(t *testing.T) {
+	root := writeAPIFixture(t, map[string]string{"a.custom": "# custom\ncode\n", "a.go": "// built-in\npackage main\n"})
+	comments := []string{"#"}
+	blocks := [][]string{{"{-", "-}"}}
+	custom := gocloc.NewLanguageDefinition("Custom", comments, blocks)
+	comments[0] = "!"
+	blocks[0][0] = "!"
+	opts := &gocloc.Options{
+		Definitions: map[string]*gocloc.LanguageDefinition{"Custom": custom},
+		Extensions:  map[string]string{"custom": "Custom"},
+	}
+	result, err := gocloc.Analyze([]string{root}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total.Total != 2 || result.Languages["Custom"].Comments != 1 || result.Languages["Go"].Comments != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	defaults, err := gocloc.Analyze([]string{root}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.Total.Total != 1 || defaults.Languages["Custom"] != nil {
+		t.Fatal("custom rules leaked into next call")
+	}
+	// Two independent callers can map the same suffix differently.
+	var wg sync.WaitGroup
+	for _, language := range []string{"Go", "Python"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := gocloc.Analyze(
+				[]string{filepath.Join(root, "a.custom")},
+				&gocloc.Options{Extensions: map[string]string{"custom": language}},
+			)
+			if err != nil || res.Languages[language] == nil {
+				t.Errorf(
+					"language=%s result=%v err=%v",
+					language,
+					res,
+					err,
+				)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestReaderEventsAndErrors(t *testing.T) {
+	language := gocloc.NewDefinedLanguages().Langs["Go"]
+	source := "\xef\xbb\xbfpackage main\r\n  // comment  \n\nlast"
+	var events []gocloc.LineEvent
+	result, err := gocloc.AnalyzeReader(
+		"sample.go",
+		language,
+		iotest.OneByteReader(strings.NewReader(source)),
+		&gocloc.FileOptions{OnLine: func(e gocloc.LineEvent) { events = append(events, e) }},
+	)
+	want := []gocloc.LineEvent{
+		{Number: 1, Kind: gocloc.CodeLine, Text: "package main"},
+		{Number: 2, Kind: gocloc.CommentLine, Text: "// comment"},
+		{Number: 3, Kind: gocloc.BlankLine, Text: ""},
+		{Number: 4, Kind: gocloc.CodeLine, Text: "last"},
+	}
+	if err != nil || result.Code != 2 || !reflect.DeepEqual(events, want) {
+		t.Fatalf(
+			"result=%+v events=%+v err=%v",
+			result,
+			events,
+			err,
+		)
+	}
+	failure := errors.New("read failed")
+	events = nil
+	result, err = gocloc.AnalyzeReader(
+		"bad.go",
+		language,
+		io.MultiReader(strings.NewReader("package main\npartial"), iotest.ErrReader(failure)),
+		&gocloc.FileOptions{OnLine: func(e gocloc.LineEvent) { events = append(events, e) }},
+	)
+	if !errors.Is(err, failure) || result.Code != 1 || len(events) != 1 {
+		t.Fatalf(
+			"partial result=%+v events=%+v err=%v",
+			result,
+			events,
+			err,
+		)
+	}
+	_, err = gocloc.AnalyzeReader(
+		"sample.go",
+		language,
+		strings.NewReader(source),
+		&gocloc.FileOptions{Debug: true, Diagnostics: failingWriter{}},
+	)
+	if !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("diagnostics error=%v", err)
+	}
+	for _, definition := range []*gocloc.LanguageDefinition{
+		nil,
+		gocloc.NewLanguageDefinition("", nil, nil),
+		gocloc.NewLanguageDefinition("bad", nil, [][]string{{"/*"}}),
+	} {
+		_, err = gocloc.AnalyzeReader(
+			"sample",
+			definition,
+			strings.NewReader("x"),
+			nil,
+		)
+		if err == nil {
+			t.Fatalf("invalid definition accepted: %+v", definition)
+		}
+	}
 }

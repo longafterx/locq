@@ -15,23 +15,14 @@ type diagnosticSink struct {
 	err    error
 }
 
-func (opts *ClocOptions) withDiagnostics() *ClocOptions {
-	if opts == nil {
-		opts = NewClocOptions()
-	}
-	prepared := *opts
-	writer := opts.Diagnostics
+func newRunState(config *runConfig, writer io.Writer, observer func(LineEvent)) *runState {
 	if writer == nil {
 		writer = os.Stderr
 	}
-	prepared.diagnostics = &diagnosticSink{writer: writer}
-	return &prepared
+	return &runState{runConfig: config, diagnostics: &diagnosticSink{writer: writer}, onLine: observer}
 }
 
-func (opts *ClocOptions) diagnosticf(format string, args ...any) {
-	if opts == nil || opts.diagnostics == nil {
-		opts = opts.withDiagnostics()
-	}
+func (opts *runState) diagnosticf(format string, args ...any) {
 	sink := opts.diagnostics
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
@@ -45,7 +36,7 @@ func (opts *ClocOptions) diagnosticf(format string, args ...any) {
 	}
 }
 
-func (opts *ClocOptions) debugLine(kind string, file *ClocFile, inComment bool, line []byte) {
+func (opts *runState) debugLine(kind string, file *ClocFile, inComment bool, line []byte) {
 	// Every physical line is classified exactly once. Derive its number only
 	// for debug output so ordinary counting needs no additional per-line state.
 	lineNumber := int64(file.Code) + int64(file.Comments) + int64(file.Blanks)
@@ -64,13 +55,13 @@ func (opts *ClocOptions) debugLine(kind string, file *ClocFile, inComment bool, 
 	)
 }
 
-func (opts *ClocOptions) warn(err error) {
+func (opts *runState) warn(err error) {
 	if err != nil {
 		opts.diagnosticf("warning: %v\n", err)
 	}
 }
 
-func (opts *ClocOptions) diagnosticError() error {
+func (opts *runState) diagnosticError() error {
 	sink := opts.diagnostics
 	sink.mu.Lock()
 	defer sink.mu.Unlock()

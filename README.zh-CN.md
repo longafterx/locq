@@ -240,6 +240,8 @@ the --timeout switch for more information.
 cloc .  22.923s user 1.960s system 86.7% cpu 28.577 total
 ```
 
+本次整理的合成语料对比、内存分配和测量局限见[整理基准记录](docs/REFACTOR_BENCHMARKS.md)。
+
 ## 使用
 
 ```sh
@@ -250,9 +252,9 @@ gocloc src tests
 # 排除依赖和构建目录
 gocloc --exclude '{dist,node_modules,target}/' .
 
-# 筛选语言或排除扩展名
+# 筛选语言或排除指定文件后缀
 gocloc -l Go,Python .
-gocloc -e txt,md .
+gocloc --exclude '*.{txt,md}' .
 
 # 按文件展示，并按代码行数排序
 gocloc -f -s code .
@@ -268,7 +270,7 @@ gocloc -L
 gocloc -h
 ```
 
-默认自动选择 worker 数量，也可使用 `-w 1` 至 `-w 64` 手动指定。
+默认自动选择 worker 数量（`-w 0`），也可使用 `-w 1` 至 `-w 64` 手动指定。
 `-o` 支持 `default`、`json`、`markdown`、`cloc-xml` 和 `sloccount`。
 长选项与短选项可以混用，完整列表见 `gocloc -h`。
 
@@ -277,9 +279,9 @@ gocloc -h
 ```sh
 gocloc --exclude 'target/' --exclude '*.min.js' .
 gocloc --exclude 'src/generated/' --exclude '**/vendor/' .
-gocloc --match '*.go' --not-match '*_test.go' .
-gocloc --match-d 'src/' --not-match-d '{dist,node_modules,target}/' .
-gocloc --match 'src/**/*.{go,py}' .
+gocloc --include '*.go' --exclude '*_test.go' .
+gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
+gocloc --include 'src/**/*.{go,py}' .
 ```
 
 | 排除模式 | 含义 |
@@ -298,17 +300,15 @@ gocloc --match 'src/**/*.{go,py}' .
 根目录之外的祖先不参与 glob 匹配。模式在所有平台统一使用 `/`，反斜杠用于转义。
 非法模式在扫描前报错。排除规则优先于包含规则；`!` 不表示重新包含，也不会自动读取 `.gitignore`。
 
-`--match`、`--not-match` 只过滤文件，不允许以 `/` 结尾。
-`--match-d`、`--not-match-d` 过滤目录及其所有后代，末尾 `/` 可省略。
-包含目录时会继续遍历尚未匹配的父目录，以便找到深层匹配。
-同时设置文件和目录包含规则时，文件必须满足两者。
-这四个参数分别接受一个 glob，可用 `{a,b}` 表达多个备选；空值表示不启用该过滤。
-`--exclude` 可重复传入，不允许空值。
+`--include` 和 `--exclude` 均可重复传入，不接受空模式。多个包含规则按“或”组合：
+文件本身或任一父目录匹配即可纳入。匹配目录会包含全部后代；遍历仍会经过尚未匹配的父目录。
+没有包含规则时，所有文件均可参与统计，排除始终优先。
+例如，`--include 'src/' --include '*.py'` 会包含 src 整棵目录树及任意位置的 Python 文件；
+如需限定 src 中的 Python 文件，应使用 `--include 'src/**/*.py'`。
 
-这些参数不再支持原来的正则语法。例如，`--match '\.go$'` 改为 `--match '*.go'`，
-`--not-match-d 'dist|node_modules|target'` 改为 `--not-match-d '{dist,node_modules,target}/'`。
-`|`、`^`、`$` 在 glob 中是普通字符。已移除 `--fullpath`，直接使用 `--match 'src/**'` 等相对路径模式。
-`-e/--exclude-ext` 继续用于扩展名过滤。
+`-l/--include-lang`、`--exclude-lang` 按语言名筛选，区分大小写，以逗号分隔，未知名称报错。
+仅排除文件后缀时使用 `--exclude '*.{txt,md}'`。glob 中的 `|`、`^`、`$` 是普通字符。
+已删除的接口与参数见[接口变更说明](docs/REFACTOR_API.md)。
 生成的报告应放在扫描目录之外，或显式排除。`>` 会覆盖目标文件。
 旧版本默认开启去重；如需保留旧版统计行为，请添加 `--dedup`。
 
@@ -329,7 +329,7 @@ result, err := gocloc.Analyze([]string{"."}, nil)
 ```go
 result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
     IncludeLangs: []string{"Go", "Python"},
-    ExcludeExts:  []string{"txt"},
+    ExcludeLangs: []string{"Plain Text"},
     Exclude:      []string{"{dist,node_modules,target}/", "*_test.go"},
     Dedup:        true, // 可选：内容相同的文件只统计一次。
 })
@@ -340,49 +340,36 @@ worker 数量为 `runtime.GOMAXPROCS(0)`，最多 64 个。`Workers: 1` 使用�
 显式指定的数量必须在 1～64 之间，零值表示自动选择。
 路径列表为空时返回空结果，不会自动扫描当前目录。
 
-过滤配置每次调用只准备一次。配置不合法时，在扫描前返回 `*gocloc.OptionError`。
-`Options.Exclude`、`Match`、`NotMatch`、`MatchDir`、`NotMatchDir` 与 CLI 使用相同的 glob 规则，
-非法 glob 的错误会标明对应字段。`Processor.Analyze` 同样支持 `ClocOptions` 中的这些字段。
-`AnalyzeFile` 和 `AnalyzeReader` 不执行路径过滤。
-原 `ClocOptions.ReMatch`、`ReNotMatch`、`ReMatchDir`、`ReNotMatchDir` 已替换为去掉 `Re` 前缀的字符串 glob 字段。
-两种选项类型都已移除 `Fullpath`；包含 `/` 的模式自动相对各输入根目录匹配路径。
-与 CLI 一致，`ExcludeExts` 排除的是扩展名对应的识别语言，包括该语言的其他扩展名。
-`IncludeLangs` 会忽略未知语言名；如果传入的名称都无法识别，则不限制统计语言。
+过滤配置和自定义语言规则每次调用只快照一次。配置非法时，在扫描前返回 `*gocloc.OptionError`。
+`Include`、`Exclude` 与 CLI 使用相同的 glob 规则。未知语言名报错，语言排除优先于包含。
+目录分析返回统计结果；无法读取的输入跳过并输出诊断，诊断写入失败会在 worker 全部退出后返回错误。
 
-`NewProcessor` 和 `ClocOptions` 继续供自定义语言规则和已有调用方使用，默认行为不变：
-`Workers <= 1` 使用单 worker，`ClocOptions{}` 启用去重，`NewClocOptions()` 不去重。
-完整程序见 [examples/files](examples/files/main.go) 和 [examples/languages](examples/languages/main.go)。
+自定义规则通过 `NewLanguageDefinition` 创建，再经 `Options.Definitions` 和 `Options.Extensions`
+传入，只影响当次调用。自定义定义始终使用旧引擎的字面注释规则，不根据名字推断扫描器；
+需要内置 Go 扫描器时，显式使用 `NewDefinedLanguages().Langs["Go"]`。
+`LanguageDefinition` 保存规则，`Language` 保存累计结果。
+完整程序见 [examples/files](examples/files/main.go)、[examples/languages](examples/languages/main.go)，
+新接口详情见[接口变更说明](docs/REFACTOR_API.md)。
 
-### 库回调
+### 同步逐行事件
 
-`Analyze` 和 `Processor.Analyze` 在 worker 中执行 `OnCode`、`OnComment` 和 `OnBlank`。
-使用多个 worker 时，不同文件的回调可能并发执行，调用方需要保护共享状态。
-例如，将以下配置传给 `gocloc.Analyze`（计数器使用 `sync/atomic`）：
+单输入接口统一返回 `(result, error)`。`AnalyzeFile` 打开并关闭文件，`AnalyzeReader` 不关闭 reader。
+两者接受独立的 `FileOptions`，不执行目录筛选、去重或并发调度。需要查看分类行时：
 
 ```go
-var codeLines atomic.Int64
-options := &gocloc.Options{
-    Dedup:  true, // 可选：内容相同的文件只统计一次。
-    OnCode: func(string) { codeLines.Add(1) },
-}
+language := gocloc.NewDefinedLanguages().Langs["Go"]
+result, err := gocloc.AnalyzeReader("sample.go", language, reader, &gocloc.FileOptions{
+    OnLine: func(event gocloc.LineEvent) {
+        fmt.Println(event.Number, event.Kind, event.Text)
+    },
+})
 ```
 
-同一文件内按行顺序调用，文件之间不保证调用顺序。`Workers` 同时限制文件分析和回调执行的并发度。
-设置 `Workers = 1` 可保证单次 `Analyze` 内回调不重叠，但不保证运行在调用方的 goroutine 上。
-回调必须返回，`Analyze` 才能结束；即使发生错误，`Analyze` 也会等待全部回调执行完毕再返回。
-`AnalyzeFile` 和 `AnalyzeReader` 仍然同步调用回调。
-这改变了旧版库在调用方 goroutine 中执行处理器回调的约定，已有调用方需要保护共享状态或显式使用单 worker。
-
-回调遵循去重设置。不去重时，每份文件都会在分析过程中触发回调，后续读取失败不能撤销已经执行的调用。
-开启去重时，worker 单次读取源文件，同时计算哈希、统计行数并记录回调事件；按发现顺序去重后，
-只有首次保留副本的事件会交给回调 worker 执行。源文件读取失败或被去重排除时，不触发回调。
-debug 日志仍然反映实际分析过程，包括被排除的副本。
-
-每次扫描的延迟事件缓存共享 16 MiB 内存缓冲容量预算（不是进程总内存上限）。
-超过额度的缓存写入系统临时目录的私有文件，回放或排除后删除；排队中的临时文件不占用打开的文件描述符。
-解析缓冲、单条回调字符串以及调用方保留的内存不计入该预算。
-临时缓存写入失败时，给出诊断并排除相应文件；回放或清理失败时，等待 worker 完成后返回错误。
-已经执行的回调无法回滚。
+事件在调用方 goroutine 中按物理行顺序同步执行。`Number` 从 1 开始，`Kind` 为 `CodeLine`、
+`CommentLine` 或 `BlankLine`；`Text` 拥有独立存储，是经过解析器规范化的文本：
+去掉首尾空白及换行，BOM 处理沿用各引擎的既有行为。读取失败时仍返回已完成行的部分计数，
+已经发出的事件不会撤销，读取失败的未完整行不计入。单输入事件不提供跨文件顺序或去重保证。
+目录扫描不再缓存事件、创建回调临时文件或使用回放 worker。
 
 ## 语言规则更新
 

@@ -16,46 +16,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestConfigureWorkerOptions(t *testing.T) {
-	t.Run("fixed worker count", func(t *testing.T) {
-		clocOpts := &gocloc.Options{}
-		if err := configureWorkerOptions(CmdOptions{Workers: workers(3)}, clocOpts); err != nil {
-			t.Fatal(err)
-		}
-		if clocOpts.Workers != 3 {
-			t.Fatalf("worker count = %d, want 3", clocOpts.Workers)
-		}
-	})
-
-	t.Run("omitted worker count uses automatic selection", func(t *testing.T) {
-		clocOpts := &gocloc.Options{}
-		if err := configureWorkerOptions(CmdOptions{}, clocOpts); err != nil {
-			t.Fatal(err)
-		}
-		if clocOpts.Workers != 0 {
-			t.Fatalf("worker count = %d, want 0 for automatic selection", clocOpts.Workers)
-		}
-	})
-
-	t.Run("zero worker count is rejected", func(t *testing.T) {
-		if err := configureWorkerOptions(CmdOptions{Workers: workers(0)}, &gocloc.Options{}); err == nil {
-			t.Fatal("configureWorkerOptions() error = nil, want error")
-		}
-	})
-
-	t.Run("negative worker count is rejected", func(t *testing.T) {
-		if err := configureWorkerOptions(CmdOptions{Workers: workers(-1)}, &gocloc.Options{}); err == nil {
-			t.Fatal("configureWorkerOptions() error = nil, want error")
-		}
-	})
-
-	t.Run("excessive worker count is rejected", func(t *testing.T) {
-		if err := configureWorkerOptions(CmdOptions{Workers: workers(gocloc.MaxWorkers + 1)}, &gocloc.Options{}); err == nil {
-			t.Fatal("configureWorkerOptions() error = nil, want error")
-		}
-	})
-}
-
 func TestAutomaticWorkersSupportsLargeRuntimeLimit(t *testing.T) {
 	previous := runtime.GOMAXPROCS(gocloc.MaxWorkers + 1)
 	defer runtime.GOMAXPROCS(previous)
@@ -83,7 +43,7 @@ func TestNegativeWorkerOptionIsRejectedBeforeVersionExit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected worker validation error")
 	}
-	if !strings.Contains(err.Error(), "--workers must be greater than or equal to zero") {
+	if !strings.Contains(err.Error(), "--workers must be zero (automatic) or between 1 and 64") {
 		t.Fatalf("error = %q, want worker validation error", err)
 	}
 	if output.Len() != 0 {
@@ -157,35 +117,31 @@ func TestRootCommandErrors(t *testing.T) {
 		{
 			name: "conflicting dedup options",
 			args: []string{"--dedup", "--skip-duplicated", "."},
-			want: "none of the others can be",
+			want: "unknown flag: --skip-duplicated",
 		},
 		{
 			name: "conflicting explicit false options",
 			args: []string{"--skip-duplicated=false", "--dedup=false", "."},
-			want: "none of the others can be",
+			want: "unknown flag: --skip-duplicated",
 		},
 		{name: "invalid dedup boolean", args: []string{"--dedup=invalid", "."}, want: "invalid argument"},
 		{name: "missing value", args: []string{"--workers"}, want: "needs an argument"},
 		{name: "invalid integer", args: []string{"--workers=many"}, want: "invalid argument"},
 		{name: "hexadecimal integer", args: []string{"--workers=0x8"}, want: "invalid argument"},
-		{name: "zero workers", args: []string{"--workers=0", "--version"}, want: "between 1 and 64"},
-		{name: "too many workers", args: []string{"--workers=65", "--show-lang"}, want: "must not exceed 64"},
-		{name: "short zero workers", args: []string{"-w0", "-V"}, want: "between 1 and 64"},
-		{name: "short negative workers", args: []string{"-w", "-1", "-V"}, want: "greater than or equal to zero"},
-		{name: "short excessive workers", args: []string{"-w65", "-L"}, want: "must not exceed 64"},
+		{name: "too many workers", args: []string{"--workers=65", "--show-lang"}, want: "zero (automatic) or between 1 and 64"},
+		{name: "short negative workers", args: []string{"-w", "-1", "-V"}, want: "zero (automatic) or between 1 and 64"},
+		{name: "short excessive workers", args: []string{"-w65", "-L"}, want: "zero (automatic) or between 1 and 64"},
 		{name: "short missing value", args: []string{"-w"}, want: "needs an argument"},
 		{name: "sort before version", args: []string{"--sort=invalid", "--version"}, want: "must be one of"},
 		{name: "invalid repeated sort", args: []string{"--sort=invalid", "--sort=name", "."}, want: "must be one of"},
 		{name: "sort conflict", args: []string{"--by-file", "--sort=files", "."}, want: "cannot be used"},
 		{name: "short sort conflict", args: []string{"-f", "-s", "files", "."}, want: "cannot be used"},
 		{name: "short sort before version", args: []string{"-sunknown", "-V"}, want: "must be one of"},
-		{name: "match glob", args: []string{"--match=[", "."}, want: "invalid --match:"},
-		{name: "not-match glob", args: []string{"--not-match=[", "."}, want: "invalid --not-match:"},
-		{name: "match-d glob", args: []string{"--match-d=[", "."}, want: "invalid --match-d:"},
-		{name: "not-match-d glob", args: []string{"--not-match-d=[", "."}, want: "invalid --not-match-d:"},
+		{name: "match glob", args: []string{"--include=[", "."}, want: "invalid --include:"},
+		{name: "not-match glob", args: []string{"--exclude=[", "."}, want: "invalid --exclude:"},
+		{name: "match-d glob", args: []string{"--include=[", "."}, want: "invalid --include:"},
+		{name: "not-match-d glob", args: []string{"--exclude=[", "."}, want: "invalid --exclude:"},
 		{name: "removed fullpath", args: []string{"--fullpath", "."}, want: "unknown flag: --fullpath"},
-		{name: "file include directory", args: []string{"--match=src/", "."}, want: "invalid --match:"},
-		{name: "file exclude directory", args: []string{"--not-match=src/", "."}, want: "invalid --not-match:"},
 		{name: "exclude glob", args: []string{"--exclude=[", "."}, want: "invalid --exclude: pattern 1"},
 		{name: "empty glob", args: []string{"--exclude=", "."}, want: "invalid --exclude: pattern 1"},
 		{
@@ -229,18 +185,10 @@ func TestRootCommandDeduplication(t *testing.T) {
 				{name: "dedup", args: []string{"--dedup"}, files: 1},
 				{name: "dedup true", args: []string{"--dedup=true"}, files: 1},
 				{name: "dedup false", args: []string{"--dedup=false"}, files: 2},
-				{name: "legacy skip", args: []string{"--skip-duplicated"}, files: 2},
-				{name: "legacy true", args: []string{"--skip-duplicated=true"}, files: 2},
-				{name: "legacy false", args: []string{"--skip-duplicated=false"}, files: 1},
 				{
 					name:  "last dedup value wins",
 					args:  []string{"--dedup", "--dedup=false"},
 					files: 2,
-				},
-				{
-					name:  "last legacy value wins",
-					args:  []string{"--skip-duplicated", "--skip-duplicated=false"},
-					files: 1,
 				},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -285,6 +233,7 @@ func TestRootCommandInformation(t *testing.T) {
 		{name: "short languages", args: []string{"-L"}, want: "Go"},
 		{name: "help ignores glob syntax", args: []string{"--exclude=[", "--help"}, want: "Usage:"},
 		{name: "languages ignore glob syntax", args: []string{"--exclude=[", "--show-lang"}, want: "Go"},
+		{name: "automatic worker", args: []string{"--workers=0", "--version"}, want: versionString(Version, GitCommit, info)},
 		{name: "one worker", args: []string{"--workers=1", "--version"}, want: versionString(Version, GitCommit, info)},
 		{name: "64 workers", args: []string{"--workers=64", "--version"}, want: versionString(Version, GitCommit, info)},
 	} {
@@ -347,8 +296,8 @@ func TestRootCommandHelpExamples(t *testing.T) {
 				"  gocloc .\n",
 				"  gocloc src tests\n",
 				"  gocloc --exclude '{dist,node_modules,target}/' .\n",
-				"  gocloc --match '*.go' --not-match '*_test.go' .\n",
-				"  gocloc --match-d 'src/' --not-match-d '{dist,node_modules,target}/' .\n",
+				"  gocloc --include '*.go' --exclude '*_test.go' .\n",
+				"  gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .\n",
 				"  gocloc -l Go,Python .\n",
 				"  gocloc -f -s code .\n",
 				"  gocloc -o json . > ../counts.json\n",
@@ -360,8 +309,4 @@ func TestRootCommandHelpExamples(t *testing.T) {
 			}
 		})
 	}
-}
-
-func workers(value int) *int {
-	return &value
 }
