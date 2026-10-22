@@ -1,28 +1,28 @@
 # Tokei language rules
 
-Source: https://github.com/XAMPPRocky/tokei/blob/c14f744716272fadeb27a74443cdffa0af35f82f/languages.json
+Upstream: https://github.com/XAMPPRocky/tokei/blob/master/languages.json
 
-Upstream commit: `c14f744716272fadeb27a74443cdffa0af35f82f`
-
-SHA-256 of `languages.json`: `596748f92a5dca4065cc73e9379cf45615f1c06ba0b5b279b5851edd8258bd05`
+[upstream.json](upstream.json) records the pinned upstream commit, SHA-256 of
+the exact `languages.json` bytes and expected number of language entries. The
+snapshot is downloaded from that immutable commit, not from a moving raw URL.
 
 The snapshot is used under its MIT license; see LICENCE-MIT in this directory.
 
-The snapshot and both generated artifacts use LF line endings, enforced by
-.gitattributes even when core.autocrlf is enabled. The SHA-256 and generated-file
+The snapshot, upstream metadata and both generated artifacts use LF line endings,
+enforced by .gitattributes even when core.autocrlf is enabled. The SHA-256 and generated-file
 checks remain byte-for-byte; Windows checkout must not rewrite their contents.
 
 ## Generation and activation
 
 Run `go generate ./...` to regenerate rules_generated.go and COVERAGE.md. The
 generator reads the checked-in snapshot and mappings.json without network access.
-It generates all **333** upstream entries, including languages with no comment
+It generates all upstream entries, including languages with no comment
 delimiters. Strict JSON decoding rejects unknown fields, malformed delimiters and
 conflicting opener meanings; prefix overlaps are resolved by longest matching.
 Vimscript's ambiguous double quote is an explicitly deferred exception.
 
-mappings.json lists all **188** existing gocloc names explicitly. **138** enable
-the generated scanner; **50** retain the legacy scanner, either because the
+mappings.json lists all existing gocloc names explicitly. Some enable
+the generated scanner; others retain the legacy scanner, either because the
 snapshot has no corresponding language or because activation needs unsupported
 context. See [COVERAGE.md](COVERAGE.md) for the exact mappings and local additions.
 The generated catalog is larger than the set of languages enabled in the CLI.
@@ -93,6 +93,50 @@ regex/division handling. A generated delimiter table does not supply dynamic
 heredocs, arbitrary language interpolation, macros or other grammar-dependent
 features not listed here. Full catalog coverage is not a claim of complete
 parsing or identical output to tokei.
+
+## Automatic upstream updates
+
+[Sync tokei language rules](../../.github/workflows/language-rules.yml) checks
+upstream every Monday at 02:23 UTC (10:23 Asia/Shanghai). It can also be run from
+GitHub Actions using `workflow_dispatch`, with an optional upstream branch, tag
+or commit. The workflow always uses the repository's default branch as its base.
+
+The updater finds the latest commit touching `languages.json` at the selected
+ref, fetches the snapshot at that commit, computes its SHA-256 and entry count,
+then strictly decodes and compiles every rule against the existing mappings.
+Unknown fields, invalid delimiters, empty catalogs or removed mapped languages
+fail before writing any local files. Network requests have timeouts and size
+limits. Existing mappings, local supplements and legacy deferrals are not changed
+automatically; new upstream entries do not add CLI language detection.
+
+When there is a diff, the workflow tests the exact candidate files on Linux,
+macOS and Windows with `go test -race -tags=integration ./...`. Only after all
+three pass does it create or update a single PR on
+`automation/tokei-language-rules`. No changes means no PR. Failures appear in
+the Actions run; they do not update the default branch. PRs require review and
+are not merged automatically.
+
+The repository must allow GitHub Actions to create pull requests under Settings
+Actions → General → Workflow permissions. The workflow uses `GITHUB_TOKEN`
+with write access only in the PR job. PRs created with this token do not trigger
+ordinary push/pull_request workflows; the preceding matrix validates candidates
+inside the sync workflow. Branch protection requiring separate PR checks may
+need a GitHub App token or a manual rerun of the required checks.
+
+To update locally, run from the repository root:
+
+```sh
+(cd internal/languagerules && go run ./cmd/gen -update)
+# Or select an upstream tag/commit explicitly:
+(cd internal/languagerules && go run ./cmd/gen -update -ref v14.0.0)
+go test -race -tags=integration ./...
+```
+
+`GITHUB_TOKEN` is optional for local updates and authenticates only GitHub API
+requests. Regular `go generate ./...`, builds and tests remain offline with
+respect to the language-rule source. Review the four changed snapshot/metadata/
+generated files before committing. For incompatible upstream changes, adapt the
+schema/compiler or mappings explicitly, then rerun the update and tests.
 
 ## Verification
 

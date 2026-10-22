@@ -18,7 +18,11 @@ func TestGenerateArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprintf("%x", sha256.Sum256(content)); got != sourceSHA256 {
+	metadata, err := readSourceMetadata(filepath.Join("../..", metadataPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(content)); got != metadata.SHA256 {
 		t.Fatalf("snapshot checksum = %s", got)
 	}
 	var upstream upstreamRules
@@ -33,8 +37,8 @@ func TestGenerateArtifacts(t *testing.T) {
 	if err := decodeJSON(content, &mappings); err != nil {
 		t.Fatal(err)
 	}
-	if len(upstream.Languages) != 333 {
-		t.Fatalf("catalog has %d entries, want 333", len(upstream.Languages))
+	if len(upstream.Languages) != metadata.Languages {
+		t.Fatalf("catalog has %d entries, want %d", len(upstream.Languages), metadata.Languages)
 	}
 	definitions := core.NewDefinedLanguages()
 	if len(mappings) != len(definitions.Langs) {

@@ -2,6 +2,8 @@ package lexer
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -78,8 +80,23 @@ func TestScannerLongestMarkers(t *testing.T) {
 
 func TestGeneratedRuleCatalog(t *testing.T) {
 	t.Parallel()
-	if len(upstreamSyntax) != 333 {
-		t.Fatalf("catalog has %d entries, want 333", len(upstreamSyntax))
+	content, err := os.ReadFile("../languagerules/languages.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Languages map[string]json.RawMessage `json:"languages"`
+	}
+	if err := json.Unmarshal(content, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Languages) == 0 || len(upstreamSyntax) != len(snapshot.Languages) {
+		t.Fatalf("catalog has %d entries, snapshot has %d", len(upstreamSyntax), len(snapshot.Languages))
+	}
+	for name := range snapshot.Languages {
+		if _, ok := upstreamSyntax[name]; !ok {
+			t.Fatalf("catalog is missing upstream language %q", name)
+		}
 	}
 	for name, rules := range upstreamSyntax {
 		t.Run(name, func(t *testing.T) {

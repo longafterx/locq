@@ -399,6 +399,14 @@ buffers, individual callback strings, and memory retained by callers are outside
 Spool write failures exclude the affected file with a diagnostic; replay or cleanup failures
 are returned after workers finish. Already delivered callbacks cannot be rolled back.
 
+## Language rule updates
+
+Language syntax rules use a pinned snapshot of tokei's `languages.json`. A weekly
+GitHub Actions workflow checks for updates, regenerates the rules and opens a PR
+after tests pass on Linux, macOS and Windows. `go generate ./...` continues to use
+the checked-in snapshot without downloading upstream rules. See
+[rule sources and update instructions](internal/languagerules/SOURCE.md).
+
 ## Jenkins
 
 Install the [SLOCCount plugin](https://plugins.jenkins.io/sloccount/) on Jenkins and put `gocloc` on the agent's `PATH`.

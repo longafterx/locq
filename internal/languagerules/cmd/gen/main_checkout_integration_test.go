@@ -21,10 +21,15 @@ func TestLanguageRuleCheckout(t *testing.T) {
 	}
 	repository := t.TempDir()
 	checkout := t.TempDir()
+	metadata, err := readSourceMetadata(filepath.Join("../..", metadataPath))
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string][]byte{"control.txt": []byte("control\n")}
 	for _, path := range []string{
 		".gitattributes",
 		"internal/languagerules/languages.json",
+		"internal/languagerules/upstream.json",
 		"internal/lexer/rules_generated.go",
 		"internal/languagerules/COVERAGE.md",
 	} {
@@ -72,6 +77,7 @@ func TestLanguageRuleCheckout(t *testing.T) {
 	runGit("checkout-index", "--all", "--prefix="+filepath.ToSlash(checkout)+"/")
 	for _, path := range []string{
 		"internal/languagerules/languages.json",
+		"internal/languagerules/upstream.json",
 		"internal/lexer/rules_generated.go",
 		"internal/languagerules/COVERAGE.md",
 		"control.txt",
@@ -82,8 +88,8 @@ func TestLanguageRuleCheckout(t *testing.T) {
 				t.Fatal(err)
 			}
 			if path == "internal/languagerules/languages.json" {
-				if got := fmt.Sprintf("%x", sha256.Sum256(content)); got != sourceSHA256 {
-					t.Fatalf("snapshot checkout checksum = %s, want %s", got, sourceSHA256)
+				if got := fmt.Sprintf("%x", sha256.Sum256(content)); got != metadata.SHA256 {
+					t.Fatalf("snapshot checkout checksum = %s, want %s", got, metadata.SHA256)
 				}
 			}
 			want := files[path]

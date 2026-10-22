@@ -1,0 +1,131 @@
+name: Sync tokei language rules
+
+on:
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Upstream branch, tag or commit
+        default: master
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-tokei-language-rules
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.snapshot.outputs.changed }}
+      base: ${{ steps.snapshot.outputs.base }}
+      commit: ${{ steps.snapshot.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+      - name: Fetch and validate upstream snapshot
+        working-directory: internal/languagerules
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TOKEI_REF: ${{ inputs.ref || 'master' }}
+        run: go run ./cmd/gen -update -ref "$TOKEI_REF"
+      - name: Check for changes
+        id: snapshot
+        shell: bash
+        run: |
+          printf 'base=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'commit=%s\n' "$(jq -r .commit internal/languagerules/upstream.json)" >> "$GITHUB_OUTPUT"
+          if git diff --quiet -- internal/languagerules internal/lexer/rules_generated.go; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload candidate rules
+        if: steps.snapshot.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tokei-language-rules
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            internal/languagerules/languages.json
+            internal/languagerules/upstream.json
+            internal/languagerules/COVERAGE.md
+            internal/lexer/rules_generated.go
+
+  test:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    name: Validate rules (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: tokei-language-rules
+          path: internal
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+      - name: Test candidate snapshot and generated rules
+        run: go test -race -tags=integration ./...
+
+  pull-request:
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: tokei-language-rules
+          path: internal
+      - name: Create or update rules PR
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/tokei-language-rules
+          delete-branch: true
+          commit-message: 'chore: sync tokei language rules'
+          title: 'chore: sync tokei language rules'
+          body: |
+            Update the pinned tokei snapshot and regenerate the scanner rules and coverage report.
+
+            Upstream: https://github.com/XAMPPRocky/tokei/blob/${{ needs.prepare.outputs.commit }}/languages.json
+
+            Validation: `go test -race -tags=integration ./...` passed on Linux, macOS and Windows in this workflow before opening this PR.
+
+            Existing language mappings, local supplements and deferred scanners remain in place. Review the generated rule changes for effects on line classification.
+          add-paths: |
+            internal/languagerules/languages.json
+            internal/languagerules/upstream.json
+            internal/languagerules/COVERAGE.md
+            internal/lexer/rules_generated.go

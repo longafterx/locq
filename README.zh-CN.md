@@ -384,6 +384,13 @@ debug 日志仍然反映实际分析过程，包括被排除的副本。
 临时缓存写入失败时，给出诊断并排除相应文件；回放或清理失败时，等待 worker 完成后返回错误。
 已经执行的回调无法回滚。
 
+## 语言规则更新
+
+语言语法规则使用 tokei `languages.json` 的固定版本快照。GitHub Actions 每周检查上游，
+生成更新，并在 Linux、macOS、Windows 测试通过后创建 PR。`go generate ./...`
+仍使用仓库内的快照，不会下载上游规则。来源、同步范围和手动更新命令见
+[语言规则说明](internal/languagerules/SOURCE.md)。
+
 ## Jenkins
 
 在 Jenkins 中安装 [SLOCCount 插件](https://plugins.jenkins.io/sloccount/)，并确保执行节点的 `PATH` 中有 `gocloc`。
