@@ -5,10 +5,10 @@ import (
 	"runtime/debug"
 )
 
-// Version is version string for gocloc command
+// Version is version string for locq command
 var Version string
 
-// GitCommit is git commit hash string for gocloc command
+// GitCommit is git commit hash string for locq command
 var GitCommit string
 
 func versionString(version, commit string, info *debug.BuildInfo) string {

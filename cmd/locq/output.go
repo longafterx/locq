@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 )
 
 // OutputTypeDefault is cloc's text output format for --output-type option
@@ -36,13 +36,13 @@ const (
 
 type outputBuilder struct {
 	opts   *CmdOptions
-	result *gocloc.Result
+	result *locq.Result
 	out    io.Writer
 	rowLen int
 	err    error
 }
 
-func newOutputBuilder(result *gocloc.Result, opts *CmdOptions, out io.Writer) *outputBuilder {
+func newOutputBuilder(result *locq.Result, opts *CmdOptions, out io.Writer) *outputBuilder {
 	rowLen := 79
 	if opts.ByFile {
 		rowLen = result.MaxPathLength + len(commonHeader) + 2
@@ -105,7 +105,7 @@ func (o *outputBuilder) WriteHeader() {
 
 	if o.opts.OutputType == OutputTypeMarkdown {
 		allHeaders := fmt.Sprintf("%s%s%s", header, strings.Repeat(" ", headerLen), commonHeader)
-		headerString := "| " + gocloc.InsertPipesInTheMiddle(allHeaders)
+		headerString := "| " + locq.InsertPipesInTheMiddle(allHeaders)
 		o.println(headerString)
 
 		for i := 0; i < len(headerString); i++ {
@@ -163,7 +163,7 @@ func (o *outputBuilder) writeByFile() {
 	total := result.Total
 	maxPathLen := result.MaxPathLength
 
-	var sortedFiles gocloc.ClocFiles
+	var sortedFiles locq.ClocFiles
 	for _, file := range clocFiles {
 		sortedFiles = append(sortedFiles, *file)
 	}
@@ -180,16 +180,16 @@ func (o *outputBuilder) writeByFile() {
 
 	switch opts.OutputType {
 	case OutputTypeClocXML:
-		t := gocloc.XMLTotalFiles{
+		t := locq.XMLTotalFiles{
 			Code:    total.Code,
 			Comment: total.Comments,
 			Blank:   total.Blanks,
 		}
-		f := &gocloc.XMLResultFiles{
+		f := &locq.XMLResultFiles{
 			Files: sortedFiles,
 			Total: t,
 		}
-		xmlResult := gocloc.XMLResult{
+		xmlResult := locq.XMLResult{
 			XMLFiles: f,
 		}
 		o.err = xmlResult.EncodeTo(o)
@@ -206,7 +206,7 @@ func (o *outputBuilder) writeByFile() {
 				file.Code, file.Lang, p, file.Name)
 		}
 	case OutputTypeJSON:
-		jsonResult := gocloc.NewJSONFilesResultFromCloc(total, sortedFiles)
+		jsonResult := locq.NewJSONFilesResultFromCloc(total, sortedFiles)
 		o.writeJSON(jsonResult)
 	case OutputTypeMarkdown:
 		for _, file := range sortedFiles {
@@ -234,7 +234,7 @@ func (o *outputBuilder) WriteResult() error {
 	if o.opts.ByFile {
 		o.writeByFile()
 	} else {
-		var sortedLanguages gocloc.Languages
+		var sortedLanguages locq.Languages
 		for _, language := range clocLangs {
 			if len(language.Files) != 0 {
 				sortedLanguages = append(sortedLanguages, *language)
@@ -255,10 +255,10 @@ func (o *outputBuilder) WriteResult() error {
 
 		switch o.opts.OutputType {
 		case OutputTypeClocXML:
-			xmlResult := gocloc.NewXMLResultFromCloc(total, sortedLanguages, gocloc.XMLResultWithLangs)
+			xmlResult := locq.NewXMLResultFromCloc(total, sortedLanguages, locq.XMLResultWithLangs)
 			o.err = xmlResult.EncodeTo(o)
 		case OutputTypeJSON:
-			jsonResult := gocloc.NewJSONLanguagesResultFromCloc(total, sortedLanguages)
+			jsonResult := locq.NewJSONLanguagesResultFromCloc(total, sortedLanguages)
 			o.writeJSON(jsonResult)
 		case OutputTypeMarkdown:
 			for _, language := range sortedLanguages {

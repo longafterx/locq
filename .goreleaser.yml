@@ -1,11 +1,11 @@
 version: 2
-project_name: gocloc
+project_name: locq
 before:
   hooks:
     - go mod download
 builds:
-  - main: ./cmd/gocloc
-    binary: gocloc
+  - main: ./cmd/locq
+    binary: locq
     ldflags:
       - -s -w
       - -X main.Version={{.Version}}

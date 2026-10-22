@@ -1,4 +1,4 @@
-package gocloc
+package locq
 
 import (
 	"flag"
@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	benchmarkPath    = flag.String("gocloc.bench-path", "", "directory to analyze in BenchmarkProcessorAnalyze")
-	benchmarkWorkers = flag.Int("gocloc.bench-workers", 0, "number of analysis workers in BenchmarkProcessorAnalyze")
-	benchmarkDedup   = flag.Bool("gocloc.bench-dedup", false, "enable duplicate-file detection in BenchmarkProcessorAnalyze")
+	benchmarkPath    = flag.String("locq.bench-path", "", "directory to analyze in BenchmarkProcessorAnalyze")
+	benchmarkWorkers = flag.Int("locq.bench-workers", 0, "number of analysis workers in BenchmarkProcessorAnalyze")
+	benchmarkDedup   = flag.Bool("locq.bench-dedup", false, "enable duplicate-file detection in BenchmarkProcessorAnalyze")
 )
 
 func newBenchmarkOptions(workers int, dedup bool) *Options {
@@ -17,11 +17,11 @@ func newBenchmarkOptions(workers int, dedup bool) *Options {
 }
 
 // BenchmarkProcessorAnalyze profiles real-directory scanning, duplicate detection,
-// and line analysis. Supply -gocloc.bench-path to run it.
+// and line analysis. Supply -locq.bench-path to run it.
 func BenchmarkProcessorAnalyze(b *testing.B) {
 	b.StopTimer()
 	if *benchmarkPath == "" {
-		b.Skip("set -gocloc.bench-path to the directory to analyze")
+		b.Skip("set -locq.bench-path to the directory to analyze")
 	}
 	info, err := os.Stat(*benchmarkPath)
 	if err != nil {

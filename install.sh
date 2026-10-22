@@ -5,7 +5,7 @@ usage() {
     printf '%s\n' \
         'Usage: sh install.sh [--version VERSION] [--install-dir DIRECTORY]' \
         '' \
-        'Install gocloc from a GitHub Release (no Go toolchain required).' \
+        'Install locq from a GitHub Release (no Go toolchain required).' \
         'Defaults: latest stable release, $HOME/.local/bin.' \
         'Versions may include or omit the v prefix.'
 }
@@ -67,7 +67,7 @@ else
     fail 'SHA-256 verification requires sha256sum or shasum'
 fi
 
-release_url=https://github.com/longafterx/gocloc/releases
+release_url=https://github.com/longafterx/locq/releases
 if [ "$version" = latest ]; then
     resolved_url=$(curl --fail --silent --show-error --location \
         --proto '=https' --proto-redir '=https' --tlsv1.2 \
@@ -89,8 +89,8 @@ esac
 printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' ||
     fail "Invalid release version: $version"
 
-archive=gocloc_${os}_${arch}.tar.gz
-checksums=gocloc_${version#v}_checksums.txt
+archive=locq_${os}_${arch}.tar.gz
+checksums=locq_${version#v}_checksums.txt
 download_url=$release_url/download/$version
 work_dir=$(mktemp -d)
 staged_binary=
@@ -110,7 +110,7 @@ download() {
         fail "Cannot download $1 for $version. Check the release assets and your network."
 }
 
-printf 'Downloading gocloc %s for %s/%s...\n' "$version" "$os" "$arch"
+printf 'Downloading locq %s for %s/%s...\n' "$version" "$os" "$arch"
 download "$archive"
 download "$checksums"
 expected=$(awk -v name="$archive" '$2 == name || $2 == "*" name {print tolower($1)}' "$work_dir/$checksums")
@@ -125,25 +125,25 @@ actual=${actual%% *}
 [ "$actual" = "$expected" ] || fail 'SHA-256 mismatch; the existing installation has not been changed'
 
 # Extract only the executable, not arbitrary paths from the archive.
-tar -xzf "$work_dir/$archive" -C "$work_dir" gocloc || fail 'Cannot extract gocloc from release archive'
-[ -f "$work_dir/gocloc" ] && [ ! -L "$work_dir/gocloc" ] || fail 'Archive does not contain a regular gocloc binary'
+tar -xzf "$work_dir/$archive" -C "$work_dir" locq || fail 'Cannot extract locq from release archive'
+[ -f "$work_dir/locq" ] && [ ! -L "$work_dir/locq" ] || fail 'Archive does not contain a regular locq binary'
 mkdir -p "$install_dir"
-[ ! -d "$install_dir/gocloc" ] && [ ! -L "$install_dir/gocloc" ] ||
-    fail "Refusing to replace a directory or symlink: $install_dir/gocloc"
+[ ! -d "$install_dir/locq" ] && [ ! -L "$install_dir/locq" ] ||
+    fail "Refusing to replace a directory or symlink: $install_dir/locq"
 
 # Verify the executable before atomically replacing an existing installation.
-staged_binary=$(mktemp "$install_dir/.gocloc.XXXXXX")
-cp "$work_dir/gocloc" "$staged_binary"
+staged_binary=$(mktemp "$install_dir/.locq.XXXXXX")
+cp "$work_dir/locq" "$staged_binary"
 chmod 755 "$staged_binary"
 installed_version=$("$staged_binary" --version) || fail 'Downloaded binary cannot run on this machine'
-mv -f "$staged_binary" "$install_dir/gocloc"
+mv -f "$staged_binary" "$install_dir/locq"
 staged_binary=
-printf 'Installed %s\n%s\n' "$install_dir/gocloc" "$installed_version"
+printf 'Installed %s\n%s\n' "$install_dir/locq" "$installed_version"
 case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *) printf 'Add %s to the beginning of PATH to use this installation.\n' "$install_dir" ;;
 esac
-existing=$(command -v gocloc || true)
-if [ -n "$existing" ] && [ "$existing" != "$install_dir/gocloc" ]; then
+existing=$(command -v locq || true)
+if [ -n "$existing" ] && [ "$existing" != "$install_dir/locq" ]; then
     printf 'Note: your PATH currently selects %s instead.\n' "$existing"
 fi

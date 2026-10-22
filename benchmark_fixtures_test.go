@@ -1,4 +1,4 @@
-package gocloc
+package locq
 
 import (
 	"crypto/sha256"

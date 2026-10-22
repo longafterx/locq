@@ -21,7 +21,7 @@ delimiters. Strict JSON decoding rejects unknown fields, malformed delimiters an
 conflicting opener meanings; prefix overlaps are resolved by longest matching.
 Vimscript's ambiguous double quote is an explicitly deferred exception.
 
-mappings.json lists all existing gocloc names explicitly. Some enable
+mappings.json lists all existing locq names explicitly. Some enable
 the generated scanner; others retain the legacy scanner, either because the
 snapshot has no corresponding language or because activation needs unsupported
 context. See [COVERAGE.md](COVERAGE.md) for the exact mappings and local additions.
@@ -76,7 +76,7 @@ C/C Header add character literals and backslash-newline splicing. C++ variants
 add dynamic raw delimiters (up to 16 characters), encoded prefixes, character
 literals and numeric digit separators. Go adds runes and raw strings. Java adds
 character literals and text blocks. Rust adds raw strings with 0-255 hashes,
-byte/C raw prefixes and lifetime/label distinctions. Assembly retains gocloc's
+byte/C raw prefixes and lifetime/label distinctions. Assembly retains locq's
 combined dialect comment markers. Nim, Coq and F# add missing nested-block rules.
 
 Python uses a lightweight statement/indentation model: the first standalone

@@ -13,19 +13,19 @@ while [ "$#" -gt 0 ]; do
         *) shift ;;
     esac
 done
-printf '%s\n' "$url" >> "$GOCLOC_INSTALL_TEST_FIXTURES/requests"
+printf '%s\n' "$url" >> "$LOCQ_INSTALL_TEST_FIXTURES/requests"
 case "$url" in
-    https://github.com/longafterx/gocloc/releases/latest)
-        [ "${GOCLOC_INSTALL_TEST_FAILURE:-}" != latest ] || exit 22
-        printf 'https://github.com/longafterx/gocloc/releases/tag/v1.2.3'
+    https://github.com/longafterx/locq/releases/latest)
+        [ "${LOCQ_INSTALL_TEST_FAILURE:-}" != latest ] || exit 22
+        printf 'https://github.com/longafterx/locq/releases/tag/v1.2.3'
         ;;
-    https://github.com/longafterx/gocloc/releases/download/v1.2.3/*)
-        [ "${GOCLOC_INSTALL_TEST_FAILURE:-}" != download ] || exit 22
+    https://github.com/longafterx/locq/releases/download/v1.2.3/*)
+        [ "${LOCQ_INSTALL_TEST_FAILURE:-}" != download ] || exit 22
         asset=${url##*/}
-        cp "$GOCLOC_INSTALL_TEST_FIXTURES/$asset" "$output"
-        case "$asset/${GOCLOC_INSTALL_TEST_FAILURE:-}" in
+        cp "$LOCQ_INSTALL_TEST_FIXTURES/$asset" "$output"
+        case "$asset/${LOCQ_INSTALL_TEST_FAILURE:-}" in
             *_checksums.txt/missing) printf '\n' > "$output" ;;
-            *_checksums.txt/duplicate) cat "$GOCLOC_INSTALL_TEST_FIXTURES/$asset" >> "$output" ;;
+            *_checksums.txt/duplicate) cat "$LOCQ_INSTALL_TEST_FIXTURES/$asset" >> "$output" ;;
             *.tar.gz/corrupt) printf 'corrupt' >> "$output" ;;
         esac
         ;;

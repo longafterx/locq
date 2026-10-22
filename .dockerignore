@@ -9,4 +9,5 @@ vendor
 trace*.out
 coverage.out
 gocloc.test
+locq.test
 **/*_test.go

@@ -1,9 +1,9 @@
-package gocloc
+package locq
 
 import (
 	"io"
 
-	"github.com/longafterx/gocloc/internal/core"
+	"github.com/longafterx/locq/internal/core"
 )
 
 // Implementation details live in internal/core.

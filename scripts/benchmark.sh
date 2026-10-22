@@ -12,7 +12,7 @@ if [ "$#" -eq 1 ]; then
     mkdir -- "$1"
     report_dir=$(CDPATH= cd -- "$1" && pwd)
 else
-    report_dir=$(mktemp -d "${TMPDIR:-/tmp}/gocloc-bench.XXXXXX")
+    report_dir=$(mktemp -d "${TMPDIR:-/tmp}/locq-bench.XXXXXX")
 fi
 cd -- "$repo_dir"
 

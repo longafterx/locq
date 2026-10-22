@@ -1,14 +1,14 @@
-# gocloc
+# locq
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![GoDoc](https://godoc.org/github.com/longafterx/gocloc?status.svg)](https://godoc.org/github.com/longafterx/gocloc)
-[![ci](https://github.com/longafterx/gocloc/workflows/Go/badge.svg)](https://github.com/longafterx/gocloc/actions)
-[![Go Report Card](https://goreportcard.com/badge/github.com/longafterx/gocloc)](https://goreportcard.com/report/github.com/longafterx/gocloc)
-[![Docker Pulls](https://img.shields.io/docker/pulls/rustyllh/gocloc)](https://hub.docker.com/r/rustyllh/gocloc)
-[![Docker Image Size](https://img.shields.io/docker/image-size/rustyllh/gocloc/latest)](https://hub.docker.com/r/rustyllh/gocloc)
+[![GoDoc](https://godoc.org/github.com/longafterx/locq?status.svg)](https://godoc.org/github.com/longafterx/locq)
+[![ci](https://github.com/longafterx/locq/workflows/Go/badge.svg)](https://github.com/longafterx/locq/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/longafterx/locq)](https://goreportcard.com/report/github.com/longafterx/locq)
+[![Docker Pulls](https://img.shields.io/docker/pulls/rustyllh/locq)](https://hub.docker.com/r/rustyllh/locq)
+[![Docker Image Size](https://img.shields.io/docker/image-size/rustyllh/locq/latest)](https://hub.docker.com/r/rustyllh/locq)
 
-一个用 Go 编写的高性能、并行源码行数统计工具，基于 [hhatto/gocloc](https://github.com/hhatto/gocloc)。
+一个用 Go 编写的高性能、并行源码行数统计工具，原名 gocloc，基于 [hhatto/gocloc](https://github.com/hhatto/gocloc)。
 灵感来自 [tokei](https://github.com/Aaronepower/tokei)，在我们最新的 Go 源码仓库基准测试中，平均耗时更低。
 
 ## 安装
@@ -18,7 +18,7 @@
 安装最新稳定版，无需 Go 环境，自动校验 SHA-256：
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/longafterx/gocloc/master/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/longafterx/locq/master/install.sh | sh
 ```
 
 需要 `curl`、`tar` 以及 `sha256sum` 或 `shasum`。默认安装到 `$HOME/.local/bin`，请按需将其加入 `PATH`。
@@ -28,21 +28,21 @@ curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/longafte
 在 PowerShell 5.1+ 中执行：
 
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/longafterx/gocloc/master/install.ps1 -ErrorAction Stop)))
+& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/longafterx/locq/master/install.ps1 -ErrorAction Stop)))
 ```
 
-默认安装到 `%LOCALAPPDATA%\gocloc\bin`，请将其加入用户 `Path`。支持 x86-64 和 i386，不支持 Windows ARM64。
+默认安装到 `%LOCALAPPDATA%\locq\bin`，请将其加入用户 `Path`。支持 x86-64 和 i386，不支持 Windows ARM64。
 
 这两种方式会执行下载的脚本，可先查看 [install.sh](install.sh) 或 [install.ps1](install.ps1)。
-再次运行安装命令即可升级，使用 `gocloc --version` 确认版本。
-也可以从 [GitHub Releases](https://github.com/longafterx/gocloc/releases) 手动下载二进制文件及校验文件。
+再次运行安装命令即可升级，使用 `locq --version` 确认版本。
+也可以从 [GitHub Releases](https://github.com/longafterx/locq/releases) 手动下载二进制文件及校验文件。
 
 ### Docker
 
 以只读方式挂载并统计当前目录：
 
 ```sh
-docker run --rm --read-only --mount "type=bind,source=$(pwd),target=/workdir,readonly" rustyllh/gocloc:latest .
+docker run --rm --read-only --mount "type=bind,source=$(pwd),target=/workdir,readonly" rustyllh/locq:latest .
 ```
 
 支持 Linux `amd64` 和 `arm64`，自动选择匹配的架构。`:vX.Y.Z` 用于固定版本，`:latest` 跟随稳定版更新。
@@ -50,9 +50,11 @@ docker run --rm --read-only --mount "type=bind,source=$(pwd),target=/workdir,rea
 
 ## 性能
 
+以下测试早于 gocloc 更名为 locq，保留当时的命令名称。
+
 * 测试日期：2026-10-15
 * CPU Apple M3 8 核 / 16 GiB / macOS 27.0.1 arm64
-* 优化版 gocloc：[38bad47](https://github.com/longafterx/gocloc/commit/38bad4752b755918759c2d2b4703b458125b01f4)（源码构建）
+* 优化版 gocloc：[38bad47](https://github.com/longafterx/locq/commit/38bad4752b755918759c2d2b4703b458125b01f4)（源码构建）
 * [tokei 14.0.0](https://github.com/XAMPPRocky/tokei/releases/tag/v14.0.0)，编译时启用了 JSON 序列化支持
 * 上游 gocloc：[679b457](https://github.com/hhatto/gocloc/commit/679b457182dcf852d90e52f132403d6b7de0e33d)（源码构建；[发行版](https://github.com/hhatto/gocloc/releases)）
 * [cloc 2.04](https://github.com/AlDanial/cloc/releases/tag/v2.04)
@@ -246,42 +248,42 @@ cloc .  22.923s user 1.960s system 86.7% cpu 28.577 total
 
 ```sh
 # 统计一个或多个目录
-gocloc .
-gocloc src tests
+locq .
+locq src tests
 
 # 排除依赖和构建目录
-gocloc --exclude '{dist,node_modules,target}/' .
+locq --exclude '{dist,node_modules,target}/' .
 
 # 筛选语言或排除指定文件后缀
-gocloc -l Go,Python .
-gocloc --exclude '*.{txt,md}' .
+locq -l Go,Python .
+locq --exclude '*.{txt,md}' .
 
 # 按文件展示，并按代码行数排序
-gocloc -f -s code .
+locq -f -s code .
 
 # 将 JSON 导出到扫描目录之外
-gocloc -o json . > ../counts.json
+locq -o json . > ../counts.json
 
 # 内容相同的文件只统计一次（默认关闭）
-gocloc --dedup .
+locq --dedup .
 
 # 列出支持的语言 / 查看全部选项
-gocloc -L
-gocloc -h
+locq -L
+locq -h
 ```
 
 默认自动选择 worker 数量（`-w 0`），也可使用 `-w 1` 至 `-w 64` 手动指定。
 `-o` 支持 `default`、`json`、`markdown`、`cloc-xml` 和 `sloccount`。
-长选项与短选项可以混用，完整列表见 `gocloc -h`。
+长选项与短选项可以混用，完整列表见 `locq -h`。
 
 文件和目录过滤统一使用 glob。使用可重复的 `--exclude` 排除文件或目录，多个规则取并集：
 
 ```sh
-gocloc --exclude 'target/' --exclude '*.min.js' .
-gocloc --exclude 'src/generated/' --exclude '**/vendor/' .
-gocloc --include '*.go' --exclude '*_test.go' .
-gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
-gocloc --include 'src/**/*.{go,py}' .
+locq --exclude 'target/' --exclude '*.min.js' .
+locq --exclude 'src/generated/' --exclude '**/vendor/' .
+locq --include '*.go' --exclude '*_test.go' .
+locq --include 'src/' --exclude '{dist,node_modules,target}/' .
+locq --include 'src/**/*.{go,py}' .
 ```
 
 | 排除模式 | 含义 |
@@ -318,16 +320,22 @@ gocloc --include 'src/**/*.{go,py}' .
 
 ### Go 库调用
 
+导入模块：
+
+```go
+import "github.com/longafterx/locq"
+```
+
 使用内置语言规则时，无需手动创建处理器：
 
 ```go
-result, err := gocloc.Analyze([]string{"."}, nil)
+result, err := locq.Analyze([]string{"."}, nil)
 ```
 
 需要过滤时，直接传入语言列表和 glob 模式：
 
 ```go
-result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
+result, err := locq.Analyze([]string{"src", "tests"}, &locq.Options{
     IncludeLangs: []string{"Go", "Python"},
     ExcludeLangs: []string{"Plain Text"},
     Exclude:      []string{"{dist,node_modules,target}/", "*_test.go"},
@@ -335,12 +343,12 @@ result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
 })
 ```
 
-使用 `result` 前应检查 `err`。`nil` 和 `&gocloc.Options{}` 均默认不去重，
+使用 `result` 前应检查 `err`。`nil` 和 `&locq.Options{}` 均默认不去重，
 worker 数量为 `runtime.GOMAXPROCS(0)`，最多 64 个。`Workers: 1` 使用单 worker；
 显式指定的数量必须在 1～64 之间，零值表示自动选择。
 路径列表为空时返回空结果，不会自动扫描当前目录。
 
-过滤配置和自定义语言规则每次调用只快照一次。配置非法时，在扫描前返回 `*gocloc.OptionError`。
+过滤配置和自定义语言规则每次调用只快照一次。配置非法时，在扫描前返回 `*locq.OptionError`。
 `Include`、`Exclude` 与 CLI 使用相同的 glob 规则。未知语言名报错，语言排除优先于包含。
 目录分析返回统计结果；无法读取的输入跳过并输出诊断，诊断写入失败会在 worker 全部退出后返回错误。
 
@@ -357,9 +365,9 @@ worker 数量为 `runtime.GOMAXPROCS(0)`，最多 64 个。`Workers: 1` 使用�
 两者接受独立的 `FileOptions`，不执行目录筛选、去重或并发调度。需要查看分类行时：
 
 ```go
-language := gocloc.NewDefinedLanguages().Langs["Go"]
-result, err := gocloc.AnalyzeReader("sample.go", language, reader, &gocloc.FileOptions{
-    OnLine: func(event gocloc.LineEvent) {
+language := locq.NewDefinedLanguages().Langs["Go"]
+result, err := locq.AnalyzeReader("sample.go", language, reader, &locq.FileOptions{
+    OnLine: func(event locq.LineEvent) {
         fmt.Println(event.Number, event.Kind, event.Text)
     },
 })
@@ -380,13 +388,13 @@ result, err := gocloc.AnalyzeReader("sample.go", language, reader, &gocloc.FileO
 
 ## Jenkins
 
-在 Jenkins 中安装 [SLOCCount 插件](https://plugins.jenkins.io/sloccount/)，并确保执行节点的 `PATH` 中有 `gocloc`。
+在 Jenkins 中安装 [SLOCCount 插件](https://plugins.jenkins.io/sloccount/)，并确保执行节点的 `PATH` 中有 `locq`。
 在已检出源码、使用 Unix 节点的声明式 Pipeline 中添加以下阶段：
 
 ```groovy
 stage('Count lines') {
     steps {
-        sh 'mkdir -p reports && gocloc -f -o sloccount --exclude=reports/ . > reports/sloccount.sc'
+        sh 'mkdir -p reports && locq -f -o sloccount --exclude=reports/ . > reports/sloccount.sc'
         sloccountPublish pattern: 'reports/sloccount.sc', encoding: 'UTF-8'
     }
 }

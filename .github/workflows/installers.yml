@@ -42,10 +42,10 @@ jobs:
           go-version: stable
           cache: true
       - name: Build test binary
-        run: go build -o ./bin/gocloc.exe ./cmd/gocloc
+        run: go build -o ./bin/locq.exe ./cmd/locq
       - name: Test installer with Windows PowerShell 5.1
         shell: powershell
-        run: ./scripts/test-install.ps1 -BinaryPath ./bin/gocloc.exe
+        run: ./scripts/test-install.ps1 -BinaryPath ./bin/locq.exe
       - name: Test installer with PowerShell 7
         shell: pwsh
-        run: ./scripts/test-install.ps1 -BinaryPath ./bin/gocloc.exe
+        run: ./scripts/test-install.ps1 -BinaryPath ./bin/locq.exe

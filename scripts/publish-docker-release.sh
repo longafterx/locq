@@ -13,12 +13,12 @@ if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$
     exit 1
 fi
 
-archive_dir=$(mktemp -d "${TMPDIR:-/tmp}/gocloc-docker-publish.XXXXXX")
+archive_dir=$(mktemp -d "${TMPDIR:-/tmp}/locq-docker-publish.XXXXXX")
 trap 'rm -rf -- "$archive_dir"' EXIT
 references=()
 for arch in amd64 arm64; do
     archive="$archive_dir/$arch.tar"
-    docker image save --output "$archive" "gocloc-release-candidate:$arch"
+    docker image save --output "$archive" "locq-release-candidate:$arch"
     digest=$(crane digest --tarball "$archive")
     if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
         printf 'Invalid image digest: %s\n' "$digest" >&2

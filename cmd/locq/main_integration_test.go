@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 )
 
 func TestCLIIntegration(t *testing.T) {
@@ -76,7 +76,7 @@ func TestCLIIntegration(t *testing.T) {
 				if err != nil || stderr != "" {
 					t.Fatalf("run CLI: %v, stderr: %s", err, stderr)
 				}
-				var result gocloc.JSONLanguagesResult
+				var result locq.JSONLanguagesResult
 				if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 					t.Fatal(err)
 				}
@@ -125,7 +125,7 @@ func TestCLIIntegration(t *testing.T) {
 				if err != nil || stderr != "" {
 					t.Fatalf("run CLI: %v, stderr: %s", err, stderr)
 				}
-				var result gocloc.JSONFilesResult
+				var result locq.JSONFilesResult
 				if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 					t.Fatal(err)
 				}
@@ -232,7 +232,7 @@ func TestCLIIntegration(t *testing.T) {
 				if err != nil || stderr != "" {
 					t.Fatalf("run CLI: %v, stderr: %s", err, stderr)
 				}
-				var result gocloc.JSONLanguagesResult
+				var result locq.JSONLanguagesResult
 				if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 					t.Fatal(err)
 				}
@@ -245,7 +245,7 @@ func TestCLIIntegration(t *testing.T) {
 
 	t.Run("output compatibility", func(t *testing.T) {
 		// Optional comparison against a CLI built before the migration.
-		baseline := os.Getenv("GOCLOC_CLI_BASELINE")
+		baseline := os.Getenv("LOCQ_CLI_BASELINE")
 		cases := []struct {
 			name string
 			args []string

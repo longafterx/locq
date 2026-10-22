@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 
 if ($Help) {
     Write-Output 'Usage: .\install.ps1 [-Version VERSION] [-InstallDir DIRECTORY]'
-    Write-Output 'Defaults: latest stable release, %LOCALAPPDATA%\gocloc\bin.'
+    Write-Output 'Defaults: latest stable release, %LOCALAPPDATA%\locq\bin.'
     Write-Output 'Versions may include or omit the v prefix. No Go toolchain is required.'
     return
 }
@@ -33,15 +33,15 @@ try {
     }
     if (-not $InstallDir) {
         if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is unset; use -InstallDir' }
-        $InstallDir = Join-Path $env:LOCALAPPDATA 'gocloc\bin'
+        $InstallDir = Join-Path $env:LOCALAPPDATA 'locq\bin'
     }
     $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
     [Net.ServicePointManager]::SecurityProtocol = $oldSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     if ($Version -eq 'latest') {
         try {
-            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/longafterx/gocloc/releases/latest' `
-                -Headers @{ 'User-Agent' = 'gocloc-installer' } -TimeoutSec 60
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/longafterx/locq/releases/latest' `
+                -Headers @{ 'User-Agent' = 'locq-installer' } -TimeoutSec 60
             $Version = $release.tag_name
         } catch {
             throw 'Cannot find the latest release. Check your network, GitHub API rate limit, and Releases; a Git tag alone has no binaries. You can also use -Version.'
@@ -52,12 +52,12 @@ try {
         throw "Invalid release version: $Version"
     }
 
-    $archive = "gocloc_Windows_$arch.zip"
-    $checksums = "gocloc_$($Version.Substring(1))_checksums.txt"
-    $downloadUrl = "https://github.com/longafterx/gocloc/releases/download/$Version"
+    $archive = "locq_Windows_$arch.zip"
+    $checksums = "locq_$($Version.Substring(1))_checksums.txt"
+    $downloadUrl = "https://github.com/longafterx/locq/releases/download/$Version"
     $workDir = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
     $null = New-Item -ItemType Directory -Path $workDir
-    Write-Output "Downloading gocloc $Version for Windows/$arch..."
+    Write-Output "Downloading locq $Version for Windows/$arch..."
     foreach ($asset in @($archive, $checksums)) {
         try {
             Invoke-WebRequest -UseBasicParsing -Uri "$downloadUrl/$asset" `
@@ -74,20 +74,20 @@ try {
     if ($actual -ne $expected) { throw 'SHA-256 mismatch; the existing installation has not been changed' }
 
     $null = New-Item -ItemType Directory -Path $InstallDir -Force
-    $destination = Join-Path $InstallDir 'gocloc.exe'
+    $destination = Join-Path $InstallDir 'locq.exe'
     if (Test-Path -LiteralPath $destination) {
         $item = Get-Item -LiteralPath $destination -Force
         if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             throw "Refusing to replace a directory or symlink: $destination"
         }
     }
-    $stagedBinary = Join-Path $InstallDir ('.gocloc-' + [guid]::NewGuid().ToString('N') + '.exe')
+    $stagedBinary = Join-Path $InstallDir ('.locq-' + [guid]::NewGuid().ToString('N') + '.exe')
     # Extract only the executable, avoiding other paths from the ZIP archive.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $workDir $archive))
     try {
-        $entries = @($zip.Entries | Where-Object { $_.FullName -eq 'gocloc.exe' })
-        if ($entries.Count -ne 1) { throw 'Archive must contain exactly one gocloc.exe' }
+        $entries = @($zip.Entries | Where-Object { $_.FullName -eq 'locq.exe' })
+        if ($entries.Count -ne 1) { throw 'Archive must contain exactly one locq.exe' }
         [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $stagedBinary)
     } finally {
         $zip.Dispose()
@@ -111,7 +111,7 @@ try {
     if (($env:PATH -split ';') -notcontains $InstallDir) {
         Write-Output "Add $InstallDir to the beginning of your user PATH, then open a new terminal."
     }
-    $existing = Get-Command gocloc -ErrorAction SilentlyContinue
+    $existing = Get-Command locq -ErrorAction SilentlyContinue
     if ($existing -and $existing.Source -ne $destination) {
         Write-Output "Note: your PATH currently selects $($existing.Source) instead."
     }

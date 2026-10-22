@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 )
 
 func TestCommandOutputUsesConfiguredWriter(t *testing.T) {
@@ -59,7 +59,7 @@ func TestCommandDiagnosticsDoNotCorruptJSON(t *testing.T) {
 				if err := command.Execute(); err != nil {
 					t.Fatal(err)
 				}
-				var result gocloc.JSONLanguagesResult
+				var result locq.JSONLanguagesResult
 				if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 					t.Fatalf("invalid JSON: %v\n%s", err, stdout.String())
 				}

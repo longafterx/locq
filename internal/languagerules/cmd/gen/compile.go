@@ -199,7 +199,7 @@ func applyLocalRules(name string, rule *compiledRule) {
 		rule.continuation = true
 		rule.note += "; local statement-aware documentation"
 	case "Assembly":
-		// gocloc groups GAS and other assembler dialects under one name.
+		// locq groups GAS and other assembler dialects under one name.
 		rule.lines = []string{"//", ";", "#", "@", "|", "!"}
 		rule.blocks = []blockRule{{open: "/*", close: "*/"}}
 		rule.note += "; preserve combined assembler comment markers"

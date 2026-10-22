@@ -121,7 +121,7 @@ func download(client *http.Client, endpoint, mediaType string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
-	request.Header.Set("User-Agent", "gocloc-language-rules-sync")
+	request.Header.Set("User-Agent", "locq-language-rules-sync")
 	request.Header.Set("Accept", mediaType)
 	if request.URL.Host == "api.github.com" {
 		if token := os.Getenv("GITHUB_TOKEN"); token != "" {

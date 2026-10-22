@@ -9,7 +9,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/longafterx/gocloc/internal/lexer"
+	"github.com/longafterx/locq/internal/lexer"
 )
 
 // ClocFile is collecting to line count result.
@@ -21,7 +21,7 @@ type ClocFile struct {
 	Lang     string `xml:"language,attr" json:"language"`
 }
 
-// ClocFiles is gocloc result set.
+// ClocFiles is locq result set.
 type ClocFiles []ClocFile
 
 func (cf ClocFiles) SortByName() {

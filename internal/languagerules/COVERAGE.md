@@ -2,14 +2,14 @@
 
 # 语言规则覆盖报告
 
-全量生成 333 个 tokei 条目；已有 188 个 gocloc 名称中，138 个启用新扫描器，50 个保留历史行为。
+全量生成 333 个 tokei 条目；已有 188 个 locq 名称中，138 个启用新扫描器，50 个保留历史行为。
 
 不导入扩展名、文件名、shebang 或 MIME；未新增可识别的文件类型。
 `blank` 是上游元数据，不表示非空行算空行。`literate`、`kind` 和嵌入入口仅在下表记录，未启用文档或嵌入语言分类。
 
-## gocloc 名称映射
+## locq 名称映射
 
-| gocloc 名称 | tokei 条目 | 状态 |
+| locq 名称 | tokei 条目 | 状态 |
 | --- | --- | --- |
 | ANTLR |  | 保留历史行为：No corresponding entry in the pinned snapshot |
 | ATS | Ats | 启用 |

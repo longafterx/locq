@@ -61,7 +61,7 @@ jobs:
 
       - name: Build on Windows
         if: matrix.os == 'windows-latest'
-        run: go build -o ./bin/ ./cmd/gocloc
+        run: go build -o ./bin/ ./cmd/locq
 
       - name: Test
         run: go test -race -tags=integration ./...

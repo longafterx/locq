@@ -2,7 +2,7 @@
 
 build:
 	mkdir -p bin
-	go build -o ./bin/gocloc ./cmd/gocloc
+	go build -o ./bin/locq ./cmd/locq
 
 cleanup-package:
 	go mod tidy

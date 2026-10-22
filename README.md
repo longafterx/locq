@@ -1,14 +1,14 @@
-# gocloc
+# locq
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![GoDoc](https://godoc.org/github.com/longafterx/gocloc?status.svg)](https://godoc.org/github.com/longafterx/gocloc)
-[![ci](https://github.com/longafterx/gocloc/workflows/Go/badge.svg)](https://github.com/longafterx/gocloc/actions)
-[![Go Report Card](https://goreportcard.com/badge/github.com/longafterx/gocloc)](https://goreportcard.com/report/github.com/longafterx/gocloc)
-[![Docker Pulls](https://img.shields.io/docker/pulls/rustyllh/gocloc)](https://hub.docker.com/r/rustyllh/gocloc)
-[![Docker Image Size](https://img.shields.io/docker/image-size/rustyllh/gocloc/latest)](https://hub.docker.com/r/rustyllh/gocloc)
+[![GoDoc](https://godoc.org/github.com/longafterx/locq?status.svg)](https://godoc.org/github.com/longafterx/locq)
+[![ci](https://github.com/longafterx/locq/workflows/Go/badge.svg)](https://github.com/longafterx/locq/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/longafterx/locq)](https://goreportcard.com/report/github.com/longafterx/locq)
+[![Docker Pulls](https://img.shields.io/docker/pulls/rustyllh/locq)](https://hub.docker.com/r/rustyllh/locq)
+[![Docker Image Size](https://img.shields.io/docker/image-size/rustyllh/locq/latest)](https://hub.docker.com/r/rustyllh/locq)
 
-A high-performance, parallel source code line counter written in Go, based on [hhatto/gocloc](https://github.com/hhatto/gocloc).
+A high-performance, parallel source code line counter written in Go, formerly named gocloc and based on [hhatto/gocloc](https://github.com/hhatto/gocloc).
 Inspired by [tokei](https://github.com/Aaronepower/tokei) and faster in our latest Go repository benchmarks.
 
 ## Installation
@@ -18,7 +18,7 @@ Inspired by [tokei](https://github.com/Aaronepower/tokei) and faster in our late
 Install the latest stable release (no Go required; SHA-256 verified):
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/longafterx/gocloc/master/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/longafterx/locq/master/install.sh | sh
 ```
 
 Requires `curl`, `tar`, and `sha256sum` or `shasum`. Installs to `$HOME/.local/bin`; add it to your `PATH` if needed.
@@ -28,21 +28,21 @@ Requires `curl`, `tar`, and `sha256sum` or `shasum`. Installs to `$HOME/.local/b
 Run in PowerShell 5.1+:
 
 ```powershell
-& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/longafterx/gocloc/master/install.ps1 -ErrorAction Stop)))
+& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/longafterx/locq/master/install.ps1 -ErrorAction Stop)))
 ```
 
-Installs to `%LOCALAPPDATA%\gocloc\bin`; add it to your user `Path`. Supports x86-64 and i386, not Windows ARM64.
+Installs to `%LOCALAPPDATA%\locq\bin`; add it to your user `Path`. Supports x86-64 and i386, not Windows ARM64.
 
 Both installers execute downloaded code; review [install.sh](install.sh) or [install.ps1](install.ps1) first if needed.
-Run the installer again to upgrade, then check `gocloc --version`.
-Alternatively, download a binary and its checksums from [GitHub Releases](https://github.com/longafterx/gocloc/releases).
+Run the installer again to upgrade, then check `locq --version`.
+Alternatively, download a binary and its checksums from [GitHub Releases](https://github.com/longafterx/locq/releases).
 
 ### Docker
 
 Run against the current directory with a read-only mount:
 
 ```sh
-docker run --rm --read-only --mount "type=bind,source=$(pwd),target=/workdir,readonly" rustyllh/gocloc:latest .
+docker run --rm --read-only --mount "type=bind,source=$(pwd),target=/workdir,readonly" rustyllh/locq:latest .
 ```
 
 Supports Linux `amd64` and `arm64`, selected automatically. Use `:vX.Y.Z` to pin a release; `:latest` tracks stable releases.
@@ -50,9 +50,11 @@ Append CLI options after the image name, for example `--dedup -o json .`.
 
 ## Performance
 
+These measurements predate the rename from gocloc to locq; original command names are retained.
+
 * measured on 2026-10-15
 * CPU Apple M3 8-core / 16 GiB / macOS 27.0.1 arm64
-* optimized gocloc: [38bad47](https://github.com/longafterx/gocloc/commit/38bad4752b755918759c2d2b4703b458125b01f4) (source build)
+* optimized gocloc: [38bad47](https://github.com/longafterx/locq/commit/38bad4752b755918759c2d2b4703b458125b01f4) (source build)
 * [tokei 14.0.0](https://github.com/XAMPPRocky/tokei/releases/tag/v14.0.0) compiled with serialization support: json
 * upstream gocloc [679b457](https://github.com/hhatto/gocloc/commit/679b457182dcf852d90e52f132403d6b7de0e33d) (source build; [releases](https://github.com/hhatto/gocloc/releases))
 * [cloc 2.04](https://github.com/AlDanial/cloc/releases/tag/v2.04)
@@ -246,43 +248,43 @@ The [refactor fixture comparison](docs/REFACTOR_BENCHMARKS.md) records separate 
 
 ```sh
 # Count one or more directories
-gocloc .
-gocloc src tests
+locq .
+locq src tests
 
 # Exclude dependency and build directories
-gocloc --exclude '{dist,node_modules,target}/' .
+locq --exclude '{dist,node_modules,target}/' .
 
 # Filter languages or literal filename suffixes
-gocloc -l Go,Python .
-gocloc --exclude '*.{txt,md}' .
+locq -l Go,Python .
+locq --exclude '*.{txt,md}' .
 
 # Report each file, sorted by code lines
-gocloc -f -s code .
+locq -f -s code .
 
 # Export JSON outside the scanned directory
-gocloc -o json . > ../counts.json
+locq -o json . > ../counts.json
 
 # Count identical contents only once (off by default)
-gocloc --dedup .
+locq --dedup .
 
 # List supported languages / show all options
-gocloc -L
-gocloc -h
+locq -L
+locq -h
 ```
 
 Workers are selected automatically (`-w 0`); use `-w 1` through `-w 64` to override.
 `-o` supports `default`, `json`, `markdown`, `cloc-xml`, and `sloccount`.
-Short and long options can be mixed; see `gocloc -h` for the full list.
+Short and long options can be mixed; see `locq -h` for the full list.
 
 All file and directory filters use globs. Use repeatable `--exclude` flags to exclude files or directories;
 any matching rule excludes the entry:
 
 ```sh
-gocloc --exclude 'target/' --exclude '*.min.js' .
-gocloc --exclude 'src/generated/' --exclude '**/vendor/' .
-gocloc --include '*.go' --exclude '*_test.go' .
-gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
-gocloc --include 'src/**/*.{go,py}' .
+locq --exclude 'target/' --exclude '*.min.js' .
+locq --exclude 'src/generated/' --exclude '**/vendor/' .
+locq --include '*.go' --exclude '*_test.go' .
+locq --include 'src/' --exclude '{dist,node_modules,target}/' .
+locq --include 'src/**/*.{go,py}' .
 ```
 
 | Exclusion pattern | Meaning |
@@ -324,16 +326,22 @@ With `--dedup`, a duplicate can produce analysis logs before a `[SKIP]` record e
 
 ### Go library
 
+Import the module:
+
+```go
+import "github.com/longafterx/locq"
+```
+
 Use the built-in languages without constructing a processor:
 
 ```go
-result, err := gocloc.Analyze([]string{"."}, nil)
+result, err := locq.Analyze([]string{"."}, nil)
 ```
 
 Pass language lists and glob patterns directly when filtering:
 
 ```go
-result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
+result, err := locq.Analyze([]string{"src", "tests"}, &locq.Options{
     IncludeLangs: []string{"Go", "Python"},
     ExcludeLangs: []string{"Plain Text"},
     Exclude:      []string{"{dist,node_modules,target}/", "*_test.go"},
@@ -341,13 +349,13 @@ result, err := gocloc.Analyze([]string{"src", "tests"}, &gocloc.Options{
 })
 ```
 
-Check `err` before using `result`. `nil` and `&gocloc.Options{}` both default to no
+Check `err` before using `result`. `nil` and `&locq.Options{}` both default to no
 deduplication and `runtime.GOMAXPROCS(0)` workers, capped at 64. `Workers: 1` selects
 one worker; explicit values outside 1–64 are rejected, while zero selects automatically.
 An empty path list returns an empty result, not a scan of the current directory.
 
 Filters and custom definitions are snapshotted once per call. Invalid options return
-`*gocloc.OptionError` before scanning; `Include` and `Exclude` use the CLI glob rules.
+`*locq.OptionError` before scanning; `Include` and `Exclude` use the CLI glob rules.
 Unknown language names are rejected, and language exclusions take precedence.
 Directory analysis returns statistics. Unreadable inputs are skipped with diagnostics;
 diagnostic writer errors are returned after workers finish.
@@ -367,9 +375,9 @@ Single-input APIs return `(result, error)`. `AnalyzeFile` opens and closes the f
 filters, deduplication or worker settings. To inspect classified lines:
 
 ```go
-language := gocloc.NewDefinedLanguages().Langs["Go"]
-result, err := gocloc.AnalyzeReader("sample.go", language, reader, &gocloc.FileOptions{
-    OnLine: func(event gocloc.LineEvent) {
+language := locq.NewDefinedLanguages().Langs["Go"]
+result, err := locq.AnalyzeReader("sample.go", language, reader, &locq.FileOptions{
+    OnLine: func(event locq.LineEvent) {
         fmt.Println(event.Number, event.Kind, event.Text)
     },
 })
@@ -392,13 +400,13 @@ the checked-in snapshot without downloading upstream rules. See
 
 ## Jenkins
 
-Install the [SLOCCount plugin](https://plugins.jenkins.io/sloccount/) on Jenkins and put `gocloc` on the agent's `PATH`.
+Install the [SLOCCount plugin](https://plugins.jenkins.io/sloccount/) on Jenkins and put `locq` on the agent's `PATH`.
 Add this stage to a Declarative Pipeline running on a Unix agent with the source checked out:
 
 ```groovy
 stage('Count lines') {
     steps {
-        sh 'mkdir -p reports && gocloc -f -o sloccount --exclude=reports/ . > reports/sloccount.sc'
+        sh 'mkdir -p reports && locq -f -o sloccount --exclude=reports/ . > reports/sloccount.sc'
         sloccountPublish pattern: 'reports/sloccount.sc', encoding: 'UTF-8'
     }
 }

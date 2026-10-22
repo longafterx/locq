@@ -1,4 +1,4 @@
-package gocloc
+package locq
 
 import (
 	"crypto/sha256"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/longafterx/gocloc/internal/lexertest"
+	"github.com/longafterx/locq/internal/lexertest"
 )
 
 const languageFixtureVersion = "v2"

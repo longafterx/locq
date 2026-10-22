@@ -13,8 +13,8 @@ if [[ ! "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
     printf 'Invalid release version: %s\n' "$version" >&2
     exit 1
 fi
-revision=${GOCLOC_REVISION:-$(git -C "$repo_dir" rev-parse HEAD)}
-context_dir=$(mktemp -d "${TMPDIR:-/tmp}/gocloc-docker.XXXXXX")
+revision=${LOCQ_REVISION:-$(git -C "$repo_dir" rev-parse HEAD)}
+context_dir=$(mktemp -d "${TMPDIR:-/tmp}/locq-docker.XXXXXX")
 trap 'rm -rf -- "$context_dir"' EXIT
 cp "$repo_dir/LICENSE" "$context_dir/LICENSE"
 
@@ -22,9 +22,9 @@ cp "$repo_dir/LICENSE" "$context_dir/LICENSE"
 (
     cd -- "$release_dir"
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum -c "gocloc_${version}_checksums.txt"
+        sha256sum -c "locq_${version}_checksums.txt"
     else
-        shasum -a 256 -c "gocloc_${version}_checksums.txt"
+        shasum -a 256 -c "locq_${version}_checksums.txt"
     fi
 )
 
@@ -36,8 +36,8 @@ for arch in amd64 arm64; do
     asset_arch=$arch
     if [[ "$arch" == amd64 ]]; then asset_arch=x86_64; fi
     mkdir -p "$context_dir/$arch"
-    tar -xOzf "$release_dir/gocloc_Linux_${asset_arch}.tar.gz" gocloc > "$context_dir/$arch/gocloc"
-    image="gocloc-release-candidate:$arch"
+    tar -xOzf "$release_dir/locq_Linux_${asset_arch}.tar.gz" locq > "$context_dir/$arch/locq"
+    image="locq-release-candidate:$arch"
     docker buildx build --load --platform "linux/$arch" --target release \
         --build-arg "VERSION=$version" --build-arg "REVISION=$revision" \
         --tag "$image" --file "$repo_dir/Dockerfile" "$context_dir"

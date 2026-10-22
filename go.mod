@@ -1,4 +1,4 @@
-module github.com/longafterx/gocloc
+module github.com/longafterx/locq
 
 go 1.23
 

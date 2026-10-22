@@ -19,7 +19,7 @@ if ($Child) {
     $env:PROCESSOR_ARCHITECTURE = $Architecture
     function Invoke-RestMethod {
         param($Uri, $Headers, $TimeoutSec)
-        if ($Uri -ne 'https://api.github.com/repos/longafterx/gocloc/releases/latest') {
+        if ($Uri -ne 'https://api.github.com/repos/longafterx/locq/releases/latest') {
             throw "Unexpected URL: $Uri"
         }
         Add-Content -LiteralPath (Join-Path $FixtureDir 'requests') -Value $Uri
@@ -28,7 +28,7 @@ if ($Child) {
     }
     function Invoke-WebRequest {
         param([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec)
-        if ($Uri -notlike 'https://github.com/longafterx/gocloc/releases/download/v1.2.3/*') {
+        if ($Uri -notlike 'https://github.com/longafterx/locq/releases/download/v1.2.3/*') {
             throw "Unexpected URL: $Uri"
         }
         Add-Content -LiteralPath (Join-Path $FixtureDir 'requests') -Value $Uri
@@ -53,7 +53,7 @@ if ($Child) {
     exit $LASTEXITCODE
 }
 
-if (-not $BinaryPath) { throw 'Supply -BinaryPath pointing to a locally built Windows gocloc.exe' }
+if (-not $BinaryPath) { throw 'Supply -BinaryPath pointing to a locally built Windows locq.exe' }
 $BinaryPath = (Resolve-Path -LiteralPath $BinaryPath).Path
 $testDir = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
 $null = New-Item -ItemType Directory -Path $testDir
@@ -66,16 +66,16 @@ try {
     foreach ($directory in @($fixtures, $invalidFixtures, $bundle, $invalidBundle, $destination)) {
         $null = New-Item -ItemType Directory -Path $directory
     }
-    Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $bundle 'gocloc.exe')
-    Set-Content -LiteralPath (Join-Path $invalidBundle 'gocloc.exe') -Value 'not an executable'
+    Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $bundle 'locq.exe')
+    Set-Content -LiteralPath (Join-Path $invalidBundle 'locq.exe') -Value 'not an executable'
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     foreach ($arch in @('x86_64', 'i386')) {
-        $asset = "gocloc_Windows_$arch.zip"
+        $asset = "locq_Windows_$arch.zip"
         [IO.Compression.ZipFile]::CreateFromDirectory($bundle, (Join-Path $fixtures $asset))
         [IO.Compression.ZipFile]::CreateFromDirectory($invalidBundle, (Join-Path $invalidFixtures $asset))
         foreach ($directory in @($fixtures, $invalidFixtures)) {
             $hash = (Get-FileHash -LiteralPath (Join-Path $directory $asset) -Algorithm SHA256).Hash
-            Add-Content -LiteralPath (Join-Path $directory 'gocloc_1.2.3_checksums.txt') -Value "$hash  $asset" -Encoding ASCII
+            Add-Content -LiteralPath (Join-Path $directory 'locq_1.2.3_checksums.txt') -Value "$hash  $asset" -Encoding ASCII
         }
     }
     $engine = (Get-Process -Id $PID).Path
@@ -108,7 +108,7 @@ try {
     Assert-Install -Name latest -ExpectedExit 0 -ExpectedText 'Installed' -Tag latest
     $requests = Get-Content -LiteralPath (Join-Path $fixtures 'requests') -Raw
     if (-not $requests.Contains('/releases/latest')) { throw 'Latest release was not resolved' }
-    $installedBinary = Join-Path $destination 'gocloc.exe'
+    $installedBinary = Join-Path $destination 'locq.exe'
     $originalHash = (Get-FileHash -LiteralPath $BinaryPath).Hash
     if ((Get-FileHash -LiteralPath $installedBinary).Hash -ne $originalHash) { throw 'Wrong installed binary' }
     foreach ($arch in @('AMD64', 'x86')) {
@@ -116,7 +116,7 @@ try {
         Assert-Install -Name "architecture-$arch" -ExpectedExit 0 -ExpectedText 'Installed' -Tag 1.2.3 -Arch $arch
         $requests = Get-Content -LiteralPath (Join-Path $fixtures 'requests') -Raw
         $assetArch = if ($arch -eq 'AMD64') { 'x86_64' } else { 'i386' }
-        if (-not $requests.Contains("gocloc_Windows_$assetArch.zip") -or $requests.Contains('/releases/latest')) {
+        if (-not $requests.Contains("locq_Windows_$assetArch.zip") -or $requests.Contains('/releases/latest')) {
             throw "Wrong release lookup for pinned version / $arch"
         }
     }
@@ -132,12 +132,12 @@ try {
         }
         Assert-Install -Name $failure -ExpectedExit 1 -ExpectedText $expected -Failure $failure -Tag latest
         if ((Get-FileHash -LiteralPath $installedBinary).Hash -ne $originalHash) { throw "Existing binary changed: $failure" }
-        if (@(Get-ChildItem -LiteralPath $destination -Filter '.gocloc-*' -Force).Count -ne 0) {
+        if (@(Get-ChildItem -LiteralPath $destination -Filter '.locq-*' -Force).Count -ne 0) {
             throw "Staged binary was not cleaned up: $failure"
         }
     }
     $directoryTarget = Join-Path $testDir 'directory-target'
-    $null = New-Item -ItemType Directory -Path (Join-Path $directoryTarget 'gocloc.exe') -Force
+    $null = New-Item -ItemType Directory -Path (Join-Path $directoryTarget 'locq.exe') -Force
     Assert-Install -Name directory-target -ExpectedExit 1 -ExpectedText 'Refusing to replace' -Target $directoryTarget
     Assert-Install -Name successful-upgrade -ExpectedExit 0 -ExpectedText 'Installed'
     Write-Output 'All Windows installer tests passed.'

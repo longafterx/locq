@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/longafterx/gocloc/internal/lexertest"
+	"github.com/longafterx/locq/internal/lexertest"
 )
 
 func TestLanguageCorpus(t *testing.T) {

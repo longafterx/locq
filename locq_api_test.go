@@ -1,4 +1,4 @@
-package gocloc_test
+package locq_test
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 )
 
 func TestAnalyzeDefaultsAndDedup(t *testing.T) {
@@ -23,18 +23,18 @@ func TestAnalyzeDefaultsAndDedup(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name  string
-		opts  *gocloc.Options
+		opts  *locq.Options
 		files int32
 	}{
 		{name: "nil", files: 2},
-		{name: "zero value", opts: &gocloc.Options{}, files: 2},
-		{name: "single worker", opts: &gocloc.Options{Workers: 1}, files: 2},
-		{name: "maximum workers", opts: &gocloc.Options{Workers: gocloc.MaxWorkers}, files: 2},
-		{name: "dedup single worker", opts: &gocloc.Options{Workers: 1, Dedup: true}, files: 1},
-		{name: "dedup automatic", opts: &gocloc.Options{Dedup: true}, files: 1},
+		{name: "zero value", opts: &locq.Options{}, files: 2},
+		{name: "single worker", opts: &locq.Options{Workers: 1}, files: 2},
+		{name: "maximum workers", opts: &locq.Options{Workers: locq.MaxWorkers}, files: 2},
+		{name: "dedup single worker", opts: &locq.Options{Workers: 1, Dedup: true}, files: 1},
+		{name: "dedup automatic", opts: &locq.Options{Dedup: true}, files: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := gocloc.Analyze([]string{dir}, tc.opts)
+			result, err := locq.Analyze([]string{dir}, tc.opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +52,7 @@ func TestAnalyzeDefaultsAndDedup(t *testing.T) {
 
 func TestAnalyzeEmptyPaths(t *testing.T) {
 	t.Parallel()
-	result, err := gocloc.Analyze(nil, nil)
+	result, err := locq.Analyze(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestAnalyzeGlobRoots(t *testing.T) {
 				inputs = append(inputs, relativePaths)
 			}
 			for _, paths := range inputs {
-				result, err := gocloc.Analyze(paths, &gocloc.Options{Exclude: []string{tc.pattern}})
+				result, err := locq.Analyze(paths, &locq.Options{Exclude: []string{tc.pattern}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -138,7 +138,7 @@ func TestAnalyzeGlobRoots(t *testing.T) {
 	}
 }
 
-func apiRelativeFiles(t *testing.T, root string, result *gocloc.Result) []string {
+func apiRelativeFiles(t *testing.T, root string, result *locq.Result) []string {
 	t.Helper()
 	files := make([]string, 0, len(result.Files))
 	for path := range result.Files {
@@ -159,7 +159,7 @@ func apiRelativeFiles(t *testing.T, root string, result *gocloc.Result) []string
 func TestAnalyzeOptionsCanBeReusedConcurrently(t *testing.T) {
 	t.Parallel()
 	dir := writeAPIFixture(t, map[string]string{"main.go": "package main\n", "main.py": "print(1)\n"})
-	opts := &gocloc.Options{
+	opts := &locq.Options{
 		IncludeLangs: []string{"Go"}, ExcludeLangs: []string{"Plain Text"}, Include: []string{"*.go"},
 	}
 	want := *opts
@@ -170,7 +170,7 @@ func TestAnalyzeOptionsCanBeReusedConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := gocloc.Analyze([]string{dir}, opts)
+			result, err := locq.Analyze([]string{dir}, opts)
 			if err != nil {
 				t.Error(err)
 				return
@@ -188,7 +188,7 @@ func TestAnalyzeOptionsCanBeReusedConcurrently(t *testing.T) {
 
 func TestAnalyzeDiagnosticFailure(t *testing.T) {
 	t.Parallel()
-	_, err := gocloc.Analyze([]string{filepath.Join(t.TempDir(), "missing")}, &gocloc.Options{
+	_, err := locq.Analyze([]string{filepath.Join(t.TempDir(), "missing")}, &locq.Options{
 		Diagnostics: failingWriter{},
 	})
 	if !errors.Is(err, io.ErrClosedPipe) {
@@ -225,12 +225,12 @@ func TestAnalyzeGlobSelections(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name string
-		opts gocloc.Options
+		opts locq.Options
 		want []string
 	}{
 		{
 			name: "exact excluded directories",
-			opts: gocloc.Options{Exclude: []string{"{dist,node_modules,target}/", "*_test.go"}},
+			opts: locq.Options{Exclude: []string{"{dist,node_modules,target}/", "*_test.go"}},
 			want: []string{
 				".hidden/main.go",
 				"distribution/a.go",
@@ -245,46 +245,46 @@ func TestAnalyzeGlobSelections(t *testing.T) {
 		},
 		{
 			name: "nested inclusion remains reachable",
-			opts: gocloc.Options{Include: []string{"nested/"}},
+			opts: locq.Options{Include: []string{"nested/"}},
 			want: []string{"src/nested/mod.py"},
 		},
 		{
 			name: "directory descendants",
-			opts: gocloc.Options{Include: []string{"/src/"}, Exclude: []string{"target/", "*_test.go"}},
+			opts: locq.Options{Include: []string{"/src/"}, Exclude: []string{"target/", "*_test.go"}},
 			want: []string{"src/main.go", "src/nested/mod.py"},
 		},
 		{
 			name: "include patterns are ORed",
-			opts: gocloc.Options{Include: []string{"/src/main.go", "scripts/"}},
+			opts: locq.Options{Include: []string{"/src/main.go", "scripts/"}},
 			want: []string{"scripts/run.py", "src/main.go"},
 		},
 		{
 			name: "file and directory same pattern",
-			opts: gocloc.Options{Include: []string{"main.go"}},
+			opts: locq.Options{Include: []string{"main.go"}},
 			want: []string{".hidden/main.go", "main.go", "src/main.go", "tests/main.go"},
 		},
-		{name: "anchored file", opts: gocloc.Options{Include: []string{"/main.go"}}, want: []string{"main.go"}},
-		{name: "exclusion wins", opts: gocloc.Options{Include: []string{"src/"}, Exclude: []string{"src/"}}, want: []string{}},
+		{name: "anchored file", opts: locq.Options{Include: []string{"/main.go"}}, want: []string{"main.go"}},
+		{name: "exclusion wins", opts: locq.Options{Include: []string{"src/"}, Exclude: []string{"src/"}}, want: []string{}},
 		{
 			name: "language inclusion",
-			opts: gocloc.Options{IncludeLangs: []string{"Python"}},
+			opts: locq.Options{IncludeLangs: []string{"Python"}},
 			want: []string{"scripts/run.py", "src/nested/mod.py"},
 		},
 		{
 			name: "language exclusion wins",
-			opts: gocloc.Options{IncludeLangs: []string{"Go"}, ExcludeLangs: []string{"Go"}},
+			opts: locq.Options{IncludeLangs: []string{"Go"}, ExcludeLangs: []string{"Go"}},
 			want: []string{},
 		},
 		{
 			name: "suffix exclusion is literal glob",
-			opts: gocloc.Options{Include: []string{"src/"}, Exclude: []string{"*.go"}},
+			opts: locq.Options{Include: []string{"src/"}, Exclude: []string{"*.go"}},
 			want: []string{"src/nested/mod.py"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, workers := range []int{1, 4} {
 				tc.opts.Workers = workers
-				result, err := gocloc.Analyze([]string{root}, &tc.opts)
+				result, err := locq.Analyze([]string{root}, &tc.opts)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -313,7 +313,7 @@ func TestAnalyzeIncludeRoots(t *testing.T) {
 			[]string{"src/main.go", "tests/main.go"},
 		},
 	} {
-		result, err := gocloc.Analyze(tc.paths, &gocloc.Options{Include: tc.include})
+		result, err := locq.Analyze(tc.paths, &locq.Options{Include: tc.include})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,20 +331,20 @@ func TestAnalyzeIncludeRoots(t *testing.T) {
 
 func TestOptionsValidationPrecedesIO(t *testing.T) {
 	for _, tc := range []struct {
-		opts  gocloc.Options
+		opts  locq.Options
 		field string
 	}{
-		{gocloc.Options{Workers: -1}, "Workers"}, {gocloc.Options{Workers: 65}, "Workers"},
-		{gocloc.Options{Include: []string{"["}}, "Include"}, {gocloc.Options{Exclude: []string{"["}}, "Exclude"},
-		{gocloc.Options{Exclude: []string{""}}, "Exclude"}, {gocloc.Options{Include: []string{"../*"}}, "Include"},
-		{gocloc.Options{IncludeLangs: []string{"typo"}}, "IncludeLangs"}, {gocloc.Options{ExcludeLangs: []string{"typo"}}, "ExcludeLangs"},
-		{gocloc.Options{Definitions: map[string]*gocloc.LanguageDefinition{"broken": nil}}, "Definitions"},
-		{gocloc.Options{Extensions: map[string]string{"custom": "unknown"}}, "Extensions"},
+		{locq.Options{Workers: -1}, "Workers"}, {locq.Options{Workers: 65}, "Workers"},
+		{locq.Options{Include: []string{"["}}, "Include"}, {locq.Options{Exclude: []string{"["}}, "Exclude"},
+		{locq.Options{Exclude: []string{""}}, "Exclude"}, {locq.Options{Include: []string{"../*"}}, "Include"},
+		{locq.Options{IncludeLangs: []string{"typo"}}, "IncludeLangs"}, {locq.Options{ExcludeLangs: []string{"typo"}}, "ExcludeLangs"},
+		{locq.Options{Definitions: map[string]*locq.LanguageDefinition{"broken": nil}}, "Definitions"},
+		{locq.Options{Extensions: map[string]string{"custom": "unknown"}}, "Extensions"},
 	} {
 		var output bytes.Buffer
 		tc.opts.Diagnostics = &output
-		result, err := gocloc.Analyze([]string{"nonexistent"}, &tc.opts)
-		var optionErr *gocloc.OptionError
+		result, err := locq.Analyze([]string{"nonexistent"}, &tc.opts)
+		var optionErr *locq.OptionError
 		if result != nil || !errors.As(err, &optionErr) || optionErr.Field != tc.field || output.Len() != 0 {
 			t.Fatalf(
 				"result=%v error=%v diagnostics=%q",
@@ -360,21 +360,21 @@ func TestPerCallLanguageConfiguration(t *testing.T) {
 	root := writeAPIFixture(t, map[string]string{"a.custom": "# custom\ncode\n", "a.go": "// built-in\npackage main\n"})
 	comments := []string{"#"}
 	blocks := [][]string{{"{-", "-}"}}
-	custom := gocloc.NewLanguageDefinition("Custom", comments, blocks)
+	custom := locq.NewLanguageDefinition("Custom", comments, blocks)
 	comments[0] = "!"
 	blocks[0][0] = "!"
-	opts := &gocloc.Options{
-		Definitions: map[string]*gocloc.LanguageDefinition{"Custom": custom},
+	opts := &locq.Options{
+		Definitions: map[string]*locq.LanguageDefinition{"Custom": custom},
 		Extensions:  map[string]string{"custom": "Custom"},
 	}
-	result, err := gocloc.Analyze([]string{root}, opts)
+	result, err := locq.Analyze([]string{root}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Total.Total != 2 || result.Languages["Custom"].Comments != 1 || result.Languages["Go"].Comments != 1 {
 		t.Fatalf("result=%+v", result)
 	}
-	defaults, err := gocloc.Analyze([]string{root}, nil)
+	defaults, err := locq.Analyze([]string{root}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,9 +387,9 @@ func TestPerCallLanguageConfiguration(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, err := gocloc.Analyze(
+			res, err := locq.Analyze(
 				[]string{filepath.Join(root, "a.custom")},
-				&gocloc.Options{Extensions: map[string]string{"custom": language}},
+				&locq.Options{Extensions: map[string]string{"custom": language}},
 			)
 			if err != nil || res.Languages[language] == nil {
 				t.Errorf(
@@ -405,20 +405,20 @@ func TestPerCallLanguageConfiguration(t *testing.T) {
 }
 
 func TestReaderEventsAndErrors(t *testing.T) {
-	language := gocloc.NewDefinedLanguages().Langs["Go"]
+	language := locq.NewDefinedLanguages().Langs["Go"]
 	source := "\xef\xbb\xbfpackage main\r\n  // comment  \n\nlast"
-	var events []gocloc.LineEvent
-	result, err := gocloc.AnalyzeReader(
+	var events []locq.LineEvent
+	result, err := locq.AnalyzeReader(
 		"sample.go",
 		language,
 		iotest.OneByteReader(strings.NewReader(source)),
-		&gocloc.FileOptions{OnLine: func(e gocloc.LineEvent) { events = append(events, e) }},
+		&locq.FileOptions{OnLine: func(e locq.LineEvent) { events = append(events, e) }},
 	)
-	want := []gocloc.LineEvent{
-		{Number: 1, Kind: gocloc.CodeLine, Text: "package main"},
-		{Number: 2, Kind: gocloc.CommentLine, Text: "// comment"},
-		{Number: 3, Kind: gocloc.BlankLine, Text: ""},
-		{Number: 4, Kind: gocloc.CodeLine, Text: "last"},
+	want := []locq.LineEvent{
+		{Number: 1, Kind: locq.CodeLine, Text: "package main"},
+		{Number: 2, Kind: locq.CommentLine, Text: "// comment"},
+		{Number: 3, Kind: locq.BlankLine, Text: ""},
+		{Number: 4, Kind: locq.CodeLine, Text: "last"},
 	}
 	if err != nil || result.Code != 2 || !reflect.DeepEqual(events, want) {
 		t.Fatalf(
@@ -430,11 +430,11 @@ func TestReaderEventsAndErrors(t *testing.T) {
 	}
 	failure := errors.New("read failed")
 	events = nil
-	result, err = gocloc.AnalyzeReader(
+	result, err = locq.AnalyzeReader(
 		"bad.go",
 		language,
 		io.MultiReader(strings.NewReader("package main\npartial"), iotest.ErrReader(failure)),
-		&gocloc.FileOptions{OnLine: func(e gocloc.LineEvent) { events = append(events, e) }},
+		&locq.FileOptions{OnLine: func(e locq.LineEvent) { events = append(events, e) }},
 	)
 	if !errors.Is(err, failure) || result.Code != 1 || len(events) != 1 {
 		t.Fatalf(
@@ -444,21 +444,21 @@ func TestReaderEventsAndErrors(t *testing.T) {
 			err,
 		)
 	}
-	_, err = gocloc.AnalyzeReader(
+	_, err = locq.AnalyzeReader(
 		"sample.go",
 		language,
 		strings.NewReader(source),
-		&gocloc.FileOptions{Debug: true, Diagnostics: failingWriter{}},
+		&locq.FileOptions{Debug: true, Diagnostics: failingWriter{}},
 	)
 	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("diagnostics error=%v", err)
 	}
-	for _, definition := range []*gocloc.LanguageDefinition{
+	for _, definition := range []*locq.LanguageDefinition{
 		nil,
-		gocloc.NewLanguageDefinition("", nil, nil),
-		gocloc.NewLanguageDefinition("bad", nil, [][]string{{"/*"}}),
+		locq.NewLanguageDefinition("", nil, nil),
+		locq.NewLanguageDefinition("bad", nil, [][]string{{"/*"}}),
 	} {
-		_, err = gocloc.AnalyzeReader(
+		_, err = locq.AnalyzeReader(
 			"sample",
 			definition,
 			strings.NewReader("x"),

@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 
-	"github.com/longafterx/gocloc/internal/lexer"
+	"github.com/longafterx/locq/internal/lexer"
 )
 
 type classifiedLine struct {

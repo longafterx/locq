@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/longafterx/gocloc"
-	"github.com/longafterx/gocloc/internal/core"
+	"github.com/longafterx/locq"
+	"github.com/longafterx/locq/internal/core"
 	"github.com/spf13/cobra"
 )
 
-// CmdOptions is gocloc command options.
+// CmdOptions is locq command options.
 type CmdOptions struct {
 	ByFile      bool
 	SortTag     string
@@ -32,41 +32,41 @@ type CmdOptions struct {
 func newRootCommand() *cobra.Command {
 	var opts CmdOptions
 	command := &cobra.Command{
-		Use:   "gocloc [OPTIONS] PATH[...]",
+		Use:   "locq [OPTIONS] PATH[...]",
 		Short: "A fast, parallel source code line counter",
 		Example: `  # Count the current directory
-  gocloc .
+  locq .
 
   # Count multiple directories
-  gocloc src tests
+  locq src tests
 
   # Exclude dependency and build directories by name
-  gocloc --exclude '{dist,node_modules,target}/' .
+  locq --exclude '{dist,node_modules,target}/' .
 
   # Include Go files and exclude tests with globs
-  gocloc --include '*.go' --exclude '*_test.go' .
+  locq --include '*.go' --exclude '*_test.go' .
 
   # Include a directory tree and exclude generated directories
-  gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .
+  locq --include 'src/' --exclude '{dist,node_modules,target}/' .
 
   # Count only Go and Python files
-  gocloc -l Go,Python .
+  locq -l Go,Python .
 
   # Report each file, sorted by code lines
-  gocloc -f -s code .
+  locq -f -s code .
 
   # Export JSON outside the scanned directory
-  gocloc -o json . > ../counts.json
+  locq -o json . > ../counts.json
 
   # Count identical contents only once
-  gocloc --dedup .`,
+  locq --dedup .`,
 		Args:               cobra.ArbitraryArgs,
 		SilenceErrors:      true,
 		SilenceUsage:       true,
 		DisableSuggestions: true,
 		CompletionOptions:  cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, paths []string) error {
-			analysisOpts := &gocloc.Options{Workers: opts.Workers}
+			analysisOpts := &locq.Options{Workers: opts.Workers}
 			if err := core.ValidateWorkers(opts.Workers); err != nil {
 				return fmt.Errorf("--workers %w", err)
 			}
@@ -76,7 +76,7 @@ func newRootCommand() *cobra.Command {
 				return err
 			}
 			if opts.ShowLang {
-				languages := gocloc.NewDefinedLanguages()
+				languages := locq.NewDefinedLanguages()
 				_, err := fmt.Fprintln(cmd.OutOrStdout(), languages.GetFormattedString())
 				return err
 			}
@@ -212,7 +212,7 @@ func (v *sortTagValue) Set(value string) error {
 	}
 }
 
-func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, out io.Writer) error {
+func runAnalysis(paths []string, opts CmdOptions, analysisOpts *locq.Options, out io.Writer) error {
 	// check sort tag option with other options
 	if opts.ByFile && opts.SortTag == "files" {
 		return fmt.Errorf("`--sort files` option cannot be used in conjunction with the `--by-file` option")
@@ -224,9 +224,9 @@ func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, 
 	analysisOpts.Debug = opts.Debug
 	analysisOpts.Dedup = opts.Dedup
 
-	result, err := gocloc.Analyze(paths, analysisOpts)
+	result, err := locq.Analyze(paths, analysisOpts)
 	if err != nil {
-		var optionErr *gocloc.OptionError
+		var optionErr *locq.OptionError
 		if errors.As(err, &optionErr) {
 			flag := map[string]string{
 				"Exclude": "exclude", "Include": "include", "Workers": "workers",
@@ -236,7 +236,7 @@ func runAnalysis(paths []string, opts CmdOptions, analysisOpts *gocloc.Options, 
 				return fmt.Errorf("invalid --%s: %w", flag, optionErr.Err)
 			}
 		}
-		return fmt.Errorf("fail gocloc analyze: %w", err)
+		return fmt.Errorf("fail locq analyze: %w", err)
 	}
 
 	return newOutputBuilder(result, &opts, out).WriteResult()

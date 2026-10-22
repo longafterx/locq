@@ -23,7 +23,7 @@ import (
 // checksummed archive that will be published, without rebuilding the CLI.
 func integrationBinary(t *testing.T) string {
 	t.Helper()
-	name := "gocloc"
+	name := "locq"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -31,10 +31,10 @@ func integrationBinary(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	releaseDir := os.Getenv("GOCLOC_RELEASE_DIR")
+	releaseDir := os.Getenv("LOCQ_RELEASE_DIR")
 	if releaseDir == "" {
-		if os.Getenv("GOCLOC_RELEASE_VERSION") != "" {
-			t.Fatal("GOCLOC_RELEASE_VERSION requires GOCLOC_RELEASE_DIR")
+		if os.Getenv("LOCQ_RELEASE_VERSION") != "" {
+			t.Fatal("LOCQ_RELEASE_VERSION requires LOCQ_RELEASE_DIR")
 		}
 		build := exec.Command("go", "build", "-o", binary, ".")
 		if output, err := build.CombinedOutput(); err != nil {
@@ -43,20 +43,20 @@ func integrationBinary(t *testing.T) string {
 		return binary
 	}
 
-	version := strings.TrimPrefix(os.Getenv("GOCLOC_RELEASE_VERSION"), "v")
+	version := strings.TrimPrefix(os.Getenv("LOCQ_RELEASE_VERSION"), "v")
 	if version == "" || strings.ContainsAny(version, `/\`) {
-		t.Fatal("set GOCLOC_RELEASE_VERSION to the release version")
+		t.Fatal("set LOCQ_RELEASE_VERSION to the release version")
 	}
 	assets := map[string]string{
-		"linux/amd64":   "gocloc_Linux_x86_64.tar.gz",
-		"linux/386":     "gocloc_Linux_i386.tar.gz",
-		"linux/arm64":   "gocloc_Linux_arm64.tar.gz",
-		"darwin/amd64":  "gocloc_Darwin_x86_64.tar.gz",
-		"darwin/arm64":  "gocloc_Darwin_arm64.tar.gz",
-		"windows/amd64": "gocloc_Windows_x86_64.zip",
-		"windows/386":   "gocloc_Windows_i386.zip",
+		"linux/amd64":   "locq_Linux_x86_64.tar.gz",
+		"linux/386":     "locq_Linux_i386.tar.gz",
+		"linux/arm64":   "locq_Linux_arm64.tar.gz",
+		"darwin/amd64":  "locq_Darwin_x86_64.tar.gz",
+		"darwin/arm64":  "locq_Darwin_arm64.tar.gz",
+		"windows/amd64": "locq_Windows_x86_64.zip",
+		"windows/386":   "locq_Windows_i386.zip",
 	}
-	manifest, err := os.ReadFile(filepath.Join(releaseDir, "gocloc_"+version+"_checksums.txt"))
+	manifest, err := os.ReadFile(filepath.Join(releaseDir, "locq_"+version+"_checksums.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func releaseExecutable(data []byte, name string, zipped bool) ([]byte, error) {
 
 func TestVerifyReleaseChecksum(t *testing.T) {
 	data := []byte("release archive")
-	valid := fmt.Sprintf("%x  gocloc.tar.gz\n", sha256.Sum256(data))
+	valid := fmt.Sprintf("%x  locq.tar.gz\n", sha256.Sum256(data))
 	for _, tc := range []struct {
 		name     string
 		manifest string
@@ -189,12 +189,12 @@ func TestVerifyReleaseChecksum(t *testing.T) {
 		{name: "valid", manifest: valid},
 		{name: "CRLF", manifest: strings.ReplaceAll(valid, "\n", "\r\n")},
 		{name: "missing", manifest: "", wantErr: true},
-		{name: "wrong name", manifest: strings.ReplaceAll(valid, "gocloc", "other"), wantErr: true},
+		{name: "wrong name", manifest: strings.ReplaceAll(valid, "locq", "other"), wantErr: true},
 		{name: "duplicate", manifest: valid + valid, wantErr: true},
-		{name: "corrupt", manifest: strings.Repeat("0", 64) + "  gocloc.tar.gz\n", wantErr: true},
+		{name: "corrupt", manifest: strings.Repeat("0", 64) + "  locq.tar.gz\n", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := verifyReleaseChecksum(data, "gocloc.tar.gz", tc.manifest)
+			err := verifyReleaseChecksum(data, "locq.tar.gz", tc.manifest)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("verify checksum: %v, want error: %t", err, tc.wantErr)
 			}
@@ -211,12 +211,12 @@ func TestReleaseExecutable(t *testing.T) {
 				symlink bool
 				wantErr bool
 			}{
-				{name: "valid", entries: []string{"LICENSE", "gocloc"}},
+				{name: "valid", entries: []string{"LICENSE", "locq"}},
 				{name: "missing", entries: []string{"LICENSE"}, wantErr: true},
-				{name: "duplicate", entries: []string{"gocloc", "gocloc"}, wantErr: true},
-				{name: "nested path", entries: []string{"bin/gocloc"}, wantErr: true},
-				{name: "traversal", entries: []string{"../gocloc"}, wantErr: true},
-				{name: "symlink", entries: []string{"gocloc"}, symlink: true, wantErr: true},
+				{name: "duplicate", entries: []string{"locq", "locq"}, wantErr: true},
+				{name: "nested path", entries: []string{"bin/locq"}, wantErr: true},
+				{name: "traversal", entries: []string{"../locq"}, wantErr: true},
+				{name: "symlink", entries: []string{"locq"}, symlink: true, wantErr: true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					var archive bytes.Buffer
@@ -266,7 +266,7 @@ func TestReleaseExecutable(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					got, err := releaseExecutable(archive.Bytes(), "gocloc", zipped)
+					got, err := releaseExecutable(archive.Bytes(), "locq", zipped)
 					if (err != nil) != tc.wantErr {
 						t.Fatalf("extract executable: %v, want error: %t", err, tc.wantErr)
 					}
@@ -276,7 +276,7 @@ func TestReleaseExecutable(t *testing.T) {
 				})
 			}
 			t.Run("corrupt archive", func(t *testing.T) {
-				if _, err := releaseExecutable([]byte("corrupt"), "gocloc", zipped); err == nil {
+				if _, err := releaseExecutable([]byte("corrupt"), "locq", zipped); err == nil {
 					t.Fatal("accepted a corrupt archive")
 				}
 			})

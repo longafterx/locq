@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 	"github.com/spf13/cobra"
 )
 
 func TestAutomaticWorkersSupportsLargeRuntimeLimit(t *testing.T) {
-	previous := runtime.GOMAXPROCS(gocloc.MaxWorkers + 1)
+	previous := runtime.GOMAXPROCS(locq.MaxWorkers + 1)
 	defer runtime.GOMAXPROCS(previous)
 
 	command := newRootCommand()
@@ -204,7 +204,7 @@ func TestRootCommandDeduplication(t *testing.T) {
 					if stderr.Len() != 0 {
 						t.Fatalf("unexpected diagnostics: %s", stderr.String())
 					}
-					var result gocloc.JSONLanguagesResult
+					var result locq.JSONLanguagesResult
 					if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 						t.Fatal(err)
 					}
@@ -288,20 +288,20 @@ func TestRootCommandHelpExamples(t *testing.T) {
 				}
 				previousSection = position
 			}
-			if !strings.HasSuffix(stdout.String(), "  gocloc --dedup .\n") {
+			if !strings.HasSuffix(stdout.String(), "  locq --dedup .\n") {
 				t.Fatal("examples must be the last help section")
 			}
 			for _, want := range []string{
 				"Examples:",
-				"  gocloc .\n",
-				"  gocloc src tests\n",
-				"  gocloc --exclude '{dist,node_modules,target}/' .\n",
-				"  gocloc --include '*.go' --exclude '*_test.go' .\n",
-				"  gocloc --include 'src/' --exclude '{dist,node_modules,target}/' .\n",
-				"  gocloc -l Go,Python .\n",
-				"  gocloc -f -s code .\n",
-				"  gocloc -o json . > ../counts.json\n",
-				"  gocloc --dedup .\n",
+				"  locq .\n",
+				"  locq src tests\n",
+				"  locq --exclude '{dist,node_modules,target}/' .\n",
+				"  locq --include '*.go' --exclude '*_test.go' .\n",
+				"  locq --include 'src/' --exclude '{dist,node_modules,target}/' .\n",
+				"  locq -l Go,Python .\n",
+				"  locq -f -s code .\n",
+				"  locq -o json . > ../counts.json\n",
+				"  locq --dedup .\n",
 			} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Errorf("help output is missing %q", want)

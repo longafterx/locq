@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/longafterx/gocloc"
+	"github.com/longafterx/locq"
 )
 
 func main() {
-	result, err := gocloc.Analyze([]string{"."}, nil)
+	result, err := locq.Analyze([]string{"."}, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gocloc: %v\n", err)
+		fmt.Fprintf(os.Stderr, "locq: %v\n", err)
 		os.Exit(1)
 	}
 

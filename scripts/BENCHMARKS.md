@@ -31,14 +31,14 @@ BENCH_FILTER='^BenchmarkProcessorLanguages$' bash scripts/benchmark.sh
 延长单组测量并指定新报告目录：
 
 ```sh
-BENCHTIME=1s BENCH_COUNT=10 bash scripts/benchmark.sh /tmp/gocloc-language-baseline
+BENCHTIME=1s BENCH_COUNT=10 bash scripts/benchmark.sh /tmp/locq-language-baseline
 ```
 
 与另一份报告比较（使用与脚本相同的固定 benchstat 版本）：
 
 ```sh
 go run golang.org/x/perf/cmd/benchstat@v0.0.0-20260908200009-22c9c6c9d4da \
-  /tmp/gocloc-language-baseline/raw.txt /tmp/gocloc-language-current/raw.txt
+  /tmp/locq-language-baseline/raw.txt /tmp/locq-language-current/raw.txt
 ```
 
 比较时保持硬件、Go 版本和运行时配置一致，逐次运行测试，保留所有样本。

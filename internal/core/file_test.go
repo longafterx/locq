@@ -574,11 +574,11 @@ func TestAnalyzeFile4Makefile(t *testing.T) {
 
 	build:
 		mkdir -p bin
-		GO111MODULE=on go build -o ./bin/gocloc cmd/gocloc/main.go
+		GO111MODULE=on go build -o ./bin/locq cmd/locq/main.go
 
 	# Another comment
 	update-package:
-		GO111MODULE=on go get -u github.com/longafterx/gocloc
+		GO111MODULE=on go get -u github.com/longafterx/locq
 
 	run-example:
 		GO111MODULE=on go run examples/languages.go
