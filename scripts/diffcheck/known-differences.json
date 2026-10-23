@@ -1,0 +1,32 @@
+[
+  {
+    "id": "plain-text-code-versus-documentation-tokei-15",
+    "path": "legacy-plain-text-prose-is-code-26de1038.txt",
+    "category": "LEXICAL_COUNT",
+    "reason": "locq counts nonblank Plain Text as code; tokei 15.0.0 counts this exact prose fixture as comments. Blank lines agree.",
+    "issue": "docs/correctness.md#已核对plain-text",
+    "reference_tool": "tokei",
+    "reference_version": "tokei 15.0.0 compiled with serialization support: json",
+    "rules_version": "locq-counting-v1:6d3b7dbc977f9b52edb82b48b5dd9e2022ed920da22b17fce9675be4cfb2e72f",
+    "source_sha256": "76018f1e668997fb1a00c25c7a4e00d066c5ec15b5e043aeb48ccbe22b7edb10",
+    "locq": {
+      "path": "legacy-plain-text-prose-is-code-26de1038.txt",
+      "language": "Plain Text",
+      "counts": {
+        "code": 2,
+        "comment": 0,
+        "blank": 1
+      }
+    },
+    "reference": {
+      "path": "legacy-plain-text-prose-is-code-26de1038.txt",
+      "language": "Plain Text",
+      "counts": {
+        "code": 0,
+        "comment": 2,
+        "blank": 1
+      }
+    },
+    "allowed": true
+  }
+]

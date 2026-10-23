@@ -19,4 +19,7 @@ gocloc.test
 locq.test
 /benchmark-results/
 
-docs
+/docs/*
+!/docs/counting-semantics.md
+!/docs/correctness.md
+!/docs/language-test-matrix.md

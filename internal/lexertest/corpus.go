@@ -51,7 +51,7 @@ func Cases() []Case {
 			Source: "x =beginning\n  =begin\nputs 1\n", Kinds: "CCC"},
 		{Name: "Pony documentation versus assigned string", Language: "Pony", Extension: "pony",
 			Source: "\"\"\"docs\n// docs\n\"\"\"\nlet s = \"\"\"value\n// text\n\"\"\"\n", Kinds: "MMMCCC"},
-		{Name: "Starlark assigned documentation delimiter", Language: "Starlark", Extension: "bzl",
+		{Name: "Starlark assigned documentation delimiter", Language: "Starlark", Extension: "star",
 			Source: "def f():\n    '''docs'''\n    x = '''value\n    # text\n    '''\n", Kinds: "CMCCC"},
 		{Name: "XML quoted comment marker", Language: "XML", Extension: "xml",
 			Source: "<x attr=\"<!--\"/>\n<!-- real\nend --> <y/>\n", Kinds: "CMC"},

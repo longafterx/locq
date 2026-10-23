@@ -1,0 +1,106 @@
+name: Differential correctness
+
+on:
+  schedule:
+    - cron: '41 3 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: correctness-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  TOKEI_VERSION: '15.0.0'
+  CLOC_VERSION: '2.04'
+  CLOC_COMMIT: '71cdcba7d1be0877f2d5f693a6b0e3f93a9c95ae'
+  TARGET_COMMIT: '6b3800e1dd90925b4184acd6391f68bffd16b6a5'
+
+jobs:
+  differential:
+    # Report-only comparisons; PR correctness comes from independent goldens.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          cache: true
+      - name: Install pinned reference tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install tokei --version "$TOKEI_VERSION" --locked
+          mkdir -p "$RUNNER_TEMP/locq-tools"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://raw.githubusercontent.com/AlDanial/cloc/$CLOC_COMMIT/cloc" \
+            -o "$RUNNER_TEMP/locq-tools/cloc"
+          chmod +x "$RUNNER_TEMP/locq-tools/cloc"
+          printf '%s\n' "$RUNNER_TEMP/locq-tools" >> "$GITHUB_PATH"
+          actual_tokei=$(tokei --version)
+          [[ "$actual_tokei" == "tokei $TOKEI_VERSION "* ]]
+          test "$("$RUNNER_TEMP/locq-tools/cloc" --version)" = "$CLOC_VERSION"
+          go build -o "$RUNNER_TEMP/locq-tools/diffcheck" ./scripts/diffcheck
+      - name: Compare independent golden corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          diffcheck -export-corpus "$RUNNER_TEMP/correctness-corpus"
+          diffcheck -root "$RUNNER_TEMP/correctness-corpus/src" \
+            -golden "$RUNNER_TEMP/correctness-corpus/golden.json" \
+            -policy aligned -cloc cloc -out "$RUNNER_TEMP/correctness-reports/corpus"
+      - name: Export pinned repository snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/correctness-target-git"
+          git -C "$RUNNER_TEMP/correctness-target-git" fetch --depth=1 \
+            https://github.com/golang/go.git "$TARGET_COMMIT"
+          test "$(git -C "$RUNNER_TEMP/correctness-target-git" rev-parse FETCH_HEAD)" = "$TARGET_COMMIT"
+          mkdir -p "$RUNNER_TEMP/correctness-target" "$RUNNER_TEMP/correctness-reports"
+          git -C "$RUNNER_TEMP/correctness-target-git" archive FETCH_HEAD \
+            | tar -x -C "$RUNNER_TEMP/correctness-target"
+          printf 'repository=https://github.com/golang/go\ncommit=%s\n' "$TARGET_COMMIT" \
+            > "$RUNNER_TEMP/correctness-reports/target.txt"
+      - name: Compare pinned repository
+        shell: bash
+        run: |
+          diffcheck -root "$RUNNER_TEMP/correctness-target" -policy aligned \
+            -cloc cloc -timeout 5m -out "$RUNNER_TEMP/correctness-reports/golang-go"
+      - name: Add report summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report_root = Path(os.environ['RUNNER_TEMP']) / 'correctness-reports'
+          reports = sorted(report_root.glob('*/report.json'))
+          incomplete = len(reports) != 2
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('## Differential correctness (report only)\n\n')
+              for path in reports:
+                  report = json.loads(path.read_text())
+                  incomplete |= not report['input_stable']
+                  incomplete |= any(not tool['complete'] for tool in report['tools'])
+                  out.write(f'### {path.parent.name}\n\n')
+                  for comparison in report['comparisons']:
+                      incomplete |= not comparison['complete']
+                      out.write(f"- {comparison['reference']}: complete={comparison['complete']}; {comparison['categories']}\n")
+                  out.write('\nFull evidence and source reproductions are in the artifact.\n\n')
+          if incomplete:
+              raise SystemExit('Measurement incomplete; inspect retained evidence.')
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: correctness-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/correctness-reports/
+            ${{ runner.temp }}/correctness-corpus/golden.json
+          if-no-files-found: warn
+          retention-days: 30

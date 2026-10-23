@@ -1,0 +1,35 @@
+name: Correctness fuzz
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '13 3 * * 6'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+      - name: Fuzz line events, read paths and all language engines
+        run: go test ./internal/core -run '^$' -fuzz '^FuzzLanguageReader$' -fuzztime=60s -parallel=4
+      - name: Fuzz generated scanner catalog
+        run: go test ./internal/lexer -run '^$' -fuzz '^FuzzScannerCatalog$' -fuzztime=60s -parallel=4
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: correctness-fuzz-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            internal/core/testdata/fuzz/
+            internal/lexer/testdata/fuzz/
+          if-no-files-found: ignore

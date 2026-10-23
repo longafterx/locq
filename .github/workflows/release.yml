@@ -18,11 +18,14 @@ jobs:
   test:
     uses: ./.github/workflows/go.yml
 
+  correctness-fuzz:
+    uses: ./.github/workflows/correctness-fuzz.yml
+
   installers:
     uses: ./.github/workflows/installers.yml
 
   package:
-    needs: [test, installers]
+    needs: [test, installers, correctness-fuzz]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
