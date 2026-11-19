@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"crypto/md5"
 	"errors"
 	"fmt"
@@ -8,9 +9,14 @@ import (
 	"io"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/longafterx/locq/internal/lexer"
 )
+
+var singleFileReaderPool = sync.Pool{
+	New: func() any { return newLineReader(nil) },
+}
 
 // ClocFile is collecting to line count result.
 type ClocFile struct {
@@ -95,8 +101,7 @@ type hashingReader struct {
 	hash   hash.Hash
 }
 
-// detectAndAnalyzeFile reuses the detection prefix for line analysis and, when
-// deduplication is enabled, hashes physical reads once. Workers bound open files.
+// detectAndAnalyzeFile 使用 worker 持有的 reader，在一次文件读取过程中完成语言探测和逐行统计。
 func detectAndAnalyzeFile(
 	candidate fileCandidate,
 	languages *DefinedLanguages,
@@ -116,13 +121,16 @@ func detectAndAnalyzeFile(
 	var source io.Reader = file
 	var hashed *hashingReader
 	if opts.Dedup {
+		// 只在缓冲层从文件读取时更新哈希；回放探测字节不会重复计入。
 		hashed = &hashingReader{reader: file, hash: md5.New()}
 		source = hashed
 	}
+	// 将 reader 切换到当前文件，复用 worker 的缓冲；返回时先解绑 reader，再关闭文件。
 	reader.reset(source)
 	defer reader.release()
 	var prefix []byte
 	var detectionErr error
+	// 按语言探测的需要读取内容：检查 shebang 只需首行，歧义扩展名可能需要全文。
 	ext, ok := detectFileType(candidate.path, opts, func(all bool) ([]byte, error) {
 		var readErr error
 		if all {
@@ -142,6 +150,7 @@ func detectAndAnalyzeFile(
 	if !ok {
 		return result
 	}
+	// 先确认语言有对应的统计规则且未被过滤，再扫描正文。
 	exts := opts.exts
 	languageKey, ok := exts[ext]
 	if !ok || languages.Langs[languageKey] == nil {
@@ -151,8 +160,7 @@ func detectAndAnalyzeFile(
 		return result
 	}
 	result.languageKey = languageKey
-	// Detection's bytes are consumed before the next physical read; replaying
-	// them requires neither another buffered reader nor another hash update.
+	// 先把探测读走的字节交给逐行统计，再从当前读取位置继续，不必回退或重读文件。
 	reader.prefix = prefix
 	result.clocFile, result.err = analyzeLines(
 		candidate.path,
@@ -164,6 +172,7 @@ func detectAndAnalyzeFile(
 		return result
 	}
 	if hashed != nil {
+		// 扫描完成后把摘要交给收集端，由收集端按文件发现顺序去重。
 		copy(result.digest[:], hashed.hash.Sum(nil))
 	}
 	result.ignored = false
@@ -200,10 +209,25 @@ func AnalyzeReader(filename string, language *LanguageDefinition, source io.Read
 }
 
 func analyzeReader(filename string, language *LanguageDefinition, source io.Reader, state *runState) (*ClocFile, error) {
+	if _, ok := source.(*bufio.Reader); ok {
+		return analyzeLines(
+			filename,
+			language,
+			newLineReader(source),
+			state,
+		)
+	}
+
+	reader := singleFileReaderPool.Get().(*lineReader)
+	defer func() {
+		reader.release()
+		singleFileReaderPool.Put(reader)
+	}()
+	reader.reset(source)
 	return analyzeLines(
 		filename,
 		language,
-		newLineReader(source),
+		reader,
 		state,
 	)
 }

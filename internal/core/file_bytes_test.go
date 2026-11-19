@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/md5"
 	"fmt"
@@ -132,6 +133,29 @@ func TestAnalyzeReaderRetainsCallbackStrings(t *testing.T) {
 	}
 	if got.Code != int32(len(want)) || !reflect.DeepEqual(lines, want) {
 		t.Fatal("callbacks must own strings after the read buffer is reused")
+	}
+}
+
+func TestAnalyzeReaderPreservesCallerBuffer(t *testing.T) {
+	t.Parallel()
+
+	const trailingLine = "// comment\n"
+	source := bufio.NewReader(strings.NewReader("package sample\n" + trailingLine))
+	opts := &FileOptions{
+		OnLine: func(event LineEvent) {
+			if buffered := source.Buffered(); event.Number == 1 && buffered != len(trailingLine) {
+				t.Errorf("caller buffer has %d bytes after first line, want %d", buffered, len(trailingLine))
+			}
+		},
+	}
+	result, err := AnalyzeReader(
+		"sample.go",
+		NewDefinedLanguages().Langs["Go"],
+		source,
+		opts,
+	)
+	if err != nil || result.Code != 1 || result.Comments != 1 {
+		t.Fatalf("result=%+v error=%v; want one code line and one comment", result, err)
 	}
 }
 
